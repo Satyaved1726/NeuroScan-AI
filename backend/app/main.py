@@ -27,13 +27,6 @@ def _startup_diag(stage: str, detail: str = "") -> None:
 
 _startup_diag("main_module_loaded", "CPU-only environment variables pre-configured")
 
-import socket
-# Custom getaddrinfo monkey patch bypassed because system DNS works correctly and hardcoded IPs caused timeouts.
-_original_getaddrinfo = socket.getaddrinfo
-def _custom_getaddrinfo(host, port, *args, **kwargs):
-    return _original_getaddrinfo(host, port, *args, **kwargs)
-socket.getaddrinfo = _custom_getaddrinfo
-
 # Initialize low-memory CPU-only TensorFlow runtime configuration
 from .ai.config import configure_tensorflow_runtime
 configure_tensorflow_runtime()
@@ -74,6 +67,9 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Supabase startup validation skipped/failed: {e}. Proceeding with local fallback mode.")
         _startup_diag("supabase_validation_fallback", f"Warning: {e}")
+    except BaseException as be:
+        _startup_diag("supabase_validation_fatal_error", f"Fatal: {type(be).__name__}: {be}")
+        raise
 
     _startup_diag("database_init_start")
     SupabaseDB.initialize()
@@ -86,8 +82,12 @@ async def lifespan(app: FastAPI):
     _startup_diag("model_artifact_sync_complete", "Model file verified on disk")
 
     _startup_diag("model_singleton_load_start", "Calling load_model_once() without eager warmup")
-    load_model_once()
-    _startup_diag("model_singleton_load_complete", "Model structure and weights loaded into memory")
+    try:
+        load_model_once()
+        _startup_diag("model_singleton_load_complete", "Model structure and weights loaded into memory")
+    except Exception as e:
+        _startup_diag("model_singleton_load_error", str(e))
+        raise
 
     try:
         _startup_diag("store_init_start")

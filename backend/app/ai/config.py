@@ -64,17 +64,11 @@ class TrainingConfig:
 def configure_tensorflow_runtime() -> None:
     """Configure TensorFlow environment for low-memory CPU execution on resource-constrained containers (e.g. Render)."""
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
     os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
     os.environ['OMP_NUM_THREADS'] = '1'
     os.environ['TF_NUM_INTRAOP_THREADS'] = '1'
     os.environ['TF_NUM_INTEROP_THREADS'] = '1'
-
-    try:
-        import tensorflow as tf
-        tf.config.set_visible_devices([], 'GPU')
-    except Exception:
-        pass
 
 
 def configure_logging() -> None:

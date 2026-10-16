@@ -143,15 +143,20 @@ def _log_supabase_environment(settings: Any) -> None:
 
 
 def verify_database_connection() -> bool:
+    print("[STARTUP-DIAG] -> verify_database_connection: initializing pool", flush=True)
     db = SupabaseDB.initialize()
+    print("[STARTUP-DIAG] -> verify_database_connection: getting connection", flush=True)
     conn = db.get_connection()
     try:
+        print("[STARTUP-DIAG] -> verify_database_connection: executing SELECT 1", flush=True)
         with conn.cursor() as cursor:
             cursor.execute('SELECT 1')
             cursor.fetchone()
+        print("[STARTUP-DIAG] -> verify_database_connection: SELECT 1 succeeded", flush=True)
         log_event(logging.INFO, 'supabase_database_verified')
         return True
     except Exception as exc:
+        print(f"[STARTUP-DIAG] -> verify_database_connection error: {exc}", flush=True)
         log_event(logging.ERROR, 'supabase_database_verification_failed', error=str(exc))
         raise
     finally:
@@ -211,11 +216,15 @@ def _bucket_items(response: Any) -> list[Any]:
 
 
 def list_storage_bucket_names() -> set[str]:
+    print("[STARTUP-DIAG] -> list_storage_bucket_names: checking settings", flush=True)
     settings = _settings_or_raise()
     _log_supabase_environment(settings)
+    print("[STARTUP-DIAG] -> list_storage_bucket_names: creating storage client", flush=True)
     client = get_storage_client()
     try:
+        print("[STARTUP-DIAG] -> list_storage_bucket_names: calling client.storage.list_buckets()", flush=True)
         buckets = client.storage.list_buckets()
+        print(f"[STARTUP-DIAG] -> list_storage_bucket_names: received response ({type(buckets).__name__})", flush=True)
         bucket_items = _bucket_items(buckets)
         names = {
             name
@@ -321,9 +330,11 @@ def verify_supabase() -> SupabaseHealth:
 
 def validate_supabase_startup() -> None:
     import time
+    print("[STARTUP-DIAG] -> validate_supabase_startup: entered", flush=True)
     max_attempts = 5
     for attempt in range(max_attempts):
         try:
+            print(f"[STARTUP-DIAG] -> validate_supabase_startup: attempt {attempt + 1}/{max_attempts}", flush=True)
             health = verify_supabase()
             log_event(
                 logging.INFO,
@@ -332,8 +343,10 @@ def validate_supabase_startup() -> None:
                 storage=health.storage,
                 buckets=health.buckets,
             )
+            print("[STARTUP-DIAG] -> validate_supabase_startup: validation passed successfully", flush=True)
             return
         except Exception as exc:
+            print(f"[STARTUP-DIAG] -> validate_supabase_startup: attempt {attempt + 1} failed: {exc}", flush=True)
             if attempt == max_attempts - 1:
                 log_event(logging.CRITICAL, 'supabase_startup_validation_failed', error=str(exc))
                 raise
