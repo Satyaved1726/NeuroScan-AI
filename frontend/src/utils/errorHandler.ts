@@ -34,8 +34,44 @@ export function normalizeError(error: unknown): ErrorInfo {
  * Get user-friendly error message
  */
 export function getUserFriendlyMessage(error: ErrorInfo): string {
-  const { status, message } = error;
+  const { status, message, details } = error;
   const lowerMessage = message?.toLowerCase() ?? '';
+
+  // Extract backend detail string if provided
+  let detailMessage = '';
+  if (typeof details === 'string') {
+    detailMessage = details;
+  } else if (typeof details === 'object' && details !== null) {
+    if ('detail' in details && typeof (details as any).detail === 'string') {
+      detailMessage = (details as any).detail;
+    } else if ('message' in details && typeof (details as any).message === 'string') {
+      detailMessage = (details as any).message;
+    }
+  }
+
+  // If backend provided a specific validation or business error, return it
+  if (detailMessage && (status === 400 || status === 409 || status === 422)) {
+    return detailMessage;
+  }
+
+  // Network and timeout errors
+  if (
+    lowerMessage.includes('timeout') ||
+    lowerMessage.includes('abort') ||
+    lowerMessage.includes('econnaborted') ||
+    status === 408
+  ) {
+    return 'Server request timed out. If the service was sleeping, it is waking up—please try again.';
+  }
+
+  if (
+    lowerMessage.includes('network') ||
+    lowerMessage.includes('failed to fetch') ||
+    lowerMessage.includes('offline') ||
+    status === 0
+  ) {
+    return 'Unable to connect to server. Please check your internet connection.';
+  }
 
   // Intercept database/SQL errors
   if (
@@ -47,19 +83,7 @@ export function getUserFriendlyMessage(error: ErrorInfo): string {
     lowerMessage.includes('database') ||
     lowerMessage.includes('db_')
   ) {
-    return 'Unable to process MRI. Please try again.';
-  }
-
-  // Intercept network/timeout errors
-  if (
-    lowerMessage.includes('timeout') ||
-    lowerMessage.includes('abort') ||
-    lowerMessage.includes('network') ||
-    lowerMessage.includes('axios') ||
-    status === 408 ||
-    status === 0
-  ) {
-    return 'Network unavailable. Retrying...';
+    return 'Database temporarily unavailable. Please try again shortly.';
   }
 
   // Intercept AI model errors
@@ -68,15 +92,14 @@ export function getUserFriendlyMessage(error: ErrorInfo): string {
     lowerMessage.includes('keras') ||
     lowerMessage.includes('inference') ||
     lowerMessage.includes('model') ||
-    lowerMessage.includes('gradcam') ||
-    lowerMessage.includes('predict')
+    lowerMessage.includes('gradcam')
   ) {
-    return 'AI service temporarily unavailable.';
+    return 'AI analysis service temporarily busy. Please try again shortly.';
   }
 
   if (status === 401) {
     if (lowerMessage.includes('credentials') || lowerMessage.includes('invalid') || lowerMessage.includes('not found')) {
-      return message;
+      return detailMessage || message;
     }
     return 'Session expired. Please login again.';
   }
@@ -86,30 +109,28 @@ export function getUserFriendlyMessage(error: ErrorInfo): string {
   }
 
   if (status === 404) {
-    return 'The requested resource was not found.';
+    return detailMessage || 'The requested resource was not found.';
   }
 
   if (status === 409) {
-    return 'This resource already exists or there is a conflict.';
+    return detailMessage || 'This record already exists or there is a conflict.';
   }
 
   if (status === 422) {
-    return 'The provided data is invalid. Please check your input.';
+    return detailMessage || 'The provided data is invalid. Please check your input.';
   }
 
   if (status === 429) {
     return 'Too many requests. Please wait a moment and try again.';
   }
 
-  if (status === 500) {
-    return 'Unable to process MRI. Please try again.';
+  if (status === 500 || status === 502 || status === 503 || status === 504) {
+    return 'Server temporarily unavailable. Please try again in a moment.';
   }
 
-  if (status === 503) {
-    return 'AI service temporarily unavailable.';
-  }
-
-  return message || 'An error occurred. Please try again.';
+  return message && !lowerMessage.includes('api request failed')
+    ? message
+    : 'An unexpected error occurred. Please try again.';
 }
 
 /**

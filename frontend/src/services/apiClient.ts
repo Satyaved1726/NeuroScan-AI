@@ -77,8 +77,43 @@ export const apiClient: AxiosInstance = axios.create({
     'Content-Type': 'application/json',
     Accept: 'application/json',
   },
-  timeout: 30000,
+  timeout: 60000, // 60s accommodates Render Free container cold start
 });
+
+let refreshPromise: Promise<string | null> | null = null;
+
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) {
+    return null;
+  }
+  if (refreshPromise) {
+    return refreshPromise;
+  }
+
+  refreshPromise = (async () => {
+    try {
+      const response = await axios.post<{ access_token: string; refresh_token?: string }>(
+        `${API_BASE_URL}/auth/refresh`,
+        { refresh_token: refreshToken },
+        { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
+      );
+      const newAccessToken = response.data.access_token;
+      setAccessToken(newAccessToken);
+      if (response.data.refresh_token) {
+        setRefreshToken(response.data.refresh_token);
+      }
+      return newAccessToken;
+    } catch {
+      clearAuthTokens();
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
 
 function normalizeAxiosError(error: unknown): ApiError {
   if (axios.isAxiosError(error)) {
@@ -92,11 +127,11 @@ function normalizeAxiosError(error: unknown): ApiError {
         : error.message || 'API request failed';
 
     if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
-      message = 'Request timed out. Please try again.';
+      message = 'Request timed out. The server may be warming up—please try again.';
     }
 
-    if (!error.response) {
-      message = 'Network issue. Please check your connection and try again.';
+    if (!error.response && error.code !== 'ECONNABORTED') {
+      message = 'Unable to reach the server. Please check your internet connection.';
     }
 
     return new ApiError(message, status, details);
@@ -132,15 +167,14 @@ function updateLoadingState(delta: number) {
 }
 
 apiClient.interceptors.request.use(
-  (config) => {
+  async (config) => {
     updateLoadingState(1);
-    const accessToken = getAccessToken();
+    let accessToken = getAccessToken();
     const isAuthEndpoint = config.url?.match(/\/auth\/(login|register|refresh|logout)/);
 
-    if (accessToken && !accessTokenIsUsable(accessToken)) {
-      clearAuthTokens();
-      updateLoadingState(-1);
-      return Promise.reject(new ApiError(AUTH_REQUIRED_MESSAGE, 401));
+    // If access token is expired, try seamless refresh before request
+    if (accessToken && !accessTokenIsUsable(accessToken) && !isAuthEndpoint) {
+      accessToken = await refreshAccessToken();
     }
 
     if (!accessToken && !isAuthEndpoint) {
@@ -178,13 +212,23 @@ apiClient.interceptors.response.use(
     const status = axiosError.status;
     const isAuthMutation = originalConfig.url?.match(/\/auth\/(login|register|logout)/);
 
-    if (status === 401 && !isAuthMutation) {
+    // If 401 on protected route, attempt a one-time token refresh
+    const retryConfig = originalConfig as any;
+    if (status === 401 && !isAuthMutation && !retryConfig._hasRetriedAuth) {
+      retryConfig._hasRetriedAuth = true;
+      const refreshedToken = await refreshAccessToken();
+      if (refreshedToken) {
+        if (originalConfig.headers) {
+          originalConfig.headers.Authorization = `Bearer ${refreshedToken}`;
+        }
+        return apiClient(originalConfig);
+      }
       expireSession();
       return Promise.reject(axiosError);
     }
 
-    // Transparent Retry Mechanism for Transient and Network Failures
-    const retryConfig = originalConfig as any;
+    // Transparent Retry Mechanism strictly for idempotent GET requests on transient network or 502/503/504 errors
+    const isGet = originalConfig.method?.toLowerCase() === 'get';
     if (!retryConfig._retryCount) {
       retryConfig._retryCount = 0;
     }
@@ -193,7 +237,7 @@ apiClient.interceptors.response.use(
       axios.isAxiosError(error) &&
       (error.code === 'ECONNABORTED' || !error.response || [502, 503, 504].includes(error.response?.status));
 
-    if (isTransient && retryConfig._retryCount < 3) {
+    if (isGet && isTransient && retryConfig._retryCount < 2) {
       retryConfig._retryCount += 1;
       const delay = Math.pow(2, retryConfig._retryCount) * 1000;
       await new Promise((resolve) => setTimeout(resolve, delay));

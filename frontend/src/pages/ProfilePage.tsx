@@ -938,12 +938,27 @@ export default function ProfilePage() {
       </div>
 
       {/* 4. Action Save Bar */}
-      <div className="sticky bottom-4 z-10 flex justify-end items-center gap-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white/90 dark:bg-[#0E1322]/90 p-4 shadow-lg backdrop-blur-md">
+      <div className="sticky bottom-4 z-10 flex flex-wrap justify-between items-center gap-4 rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white/90 dark:bg-[#0E1322]/90 p-4 shadow-lg backdrop-blur-md">
+        {error ? (
+          <div className="flex items-center gap-2 text-xs text-red-500 font-semibold">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span className="truncate max-w-xs sm:max-w-md">{error}</span>
+            <button
+              type="button"
+              onClick={() => loadProfile()}
+              className="ml-2 text-clinical-primary underline text-xs font-bold hover:opacity-80 cursor-pointer"
+            >
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div />
+        )}
 
         <button
           type="submit"
           disabled={isSaving}
-          className="inline-flex items-center gap-2 rounded-3xl bg-medical-blue px-6 py-2.5 text-xs font-bold text-white transition hover:bg-medical-blue/95 disabled:opacity-50"
+          className="inline-flex items-center gap-2 rounded-3xl bg-medical-blue px-6 py-2.5 text-xs font-bold text-white transition hover:bg-medical-blue/95 disabled:opacity-50 cursor-pointer"
         >
           <Save className="h-4 w-4" />
           {isSaving ? 'Saving Changes...' : 'Save Profile Changes'}

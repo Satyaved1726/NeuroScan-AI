@@ -112,7 +112,9 @@ def get_profile(user: UserOut = Depends(current_user_dependency)):
 def create_profile(payload: PatientProfileCreate, user: UserOut = Depends(current_user_dependency)):
     store = get_store()
     if store.get_patient_profile(user.id):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Patient profile already exists')
+        profile = store.update_patient_profile(user.id, payload.model_dump(exclude_unset=True))
+        if profile:
+            return PatientProfileOut(**profile)
     try:
         profile = store.create_patient_profile(user.id, payload.model_dump())
     except ValueError as exc:
@@ -124,7 +126,12 @@ def create_profile(payload: PatientProfileCreate, user: UserOut = Depends(curren
 def update_profile(payload: PatientProfileUpdate, user: UserOut = Depends(current_user_dependency)):
     store = get_store()
     try:
-        profile = store.update_patient_profile(user.id, payload.model_dump(exclude_unset=True))
+        data = payload.model_dump(exclude_unset=True)
+        profile = store.update_patient_profile(user.id, data)
+        if not profile:
+            if not data.get('full_name'):
+                data['full_name'] = user.full_name or 'Patient Profile'
+            profile = store.create_patient_profile(user.id, data)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     if not profile:

@@ -148,16 +148,41 @@ function toDashboardData(summary: DashboardSummaryResponse): DashboardData {
   };
 }
 
+let inFlightDashboardPromise: Promise<DashboardData> | null = null;
+let cachedDashboard: { data: DashboardData; timestamp: number } | null = null;
+const DASHBOARD_CACHE_TTL_MS = 15000;
+
+export function invalidateDashboardCache(): void {
+  cachedDashboard = null;
+  inFlightDashboardPromise = null;
+}
+
 /**
  * Fetch dashboard statistics and analytics
  */
-export async function fetchDashboardData(): Promise<DashboardData> {
-  try {
-    const response = await apiClient.get<DashboardSummaryResponse>('/dashboard/summary');
-    return toDashboardData(response.data);
-  } catch (error) {
-    throw normalizeDashboardError(error);
+export async function fetchDashboardData(options?: { forceRefresh?: boolean } | unknown): Promise<DashboardData> {
+  const forceRefresh = Boolean(typeof options === 'object' && options !== null && 'forceRefresh' in options && (options as any).forceRefresh);
+  if (!forceRefresh && cachedDashboard && Date.now() - cachedDashboard.timestamp < DASHBOARD_CACHE_TTL_MS) {
+    return cachedDashboard.data;
   }
+  if (!forceRefresh && inFlightDashboardPromise) {
+    return inFlightDashboardPromise;
+  }
+
+  inFlightDashboardPromise = (async () => {
+    try {
+      const response = await apiClient.get<DashboardSummaryResponse>('/dashboard/summary');
+      const data = toDashboardData(response.data);
+      cachedDashboard = { data, timestamp: Date.now() };
+      return data;
+    } catch (error) {
+      throw normalizeDashboardError(error);
+    } finally {
+      inFlightDashboardPromise = null;
+    }
+  })();
+
+  return inFlightDashboardPromise;
 }
 
 /**

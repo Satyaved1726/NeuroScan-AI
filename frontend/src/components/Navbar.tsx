@@ -22,7 +22,7 @@ export default function Navbar({ toggleSidebar, isSidebarCollapsed = true }: Nav
   const { photoUrl } = useProfilePhoto();
   const navigate = useNavigate();
   const { language, setLanguage, t } = useLanguage();
-  const { theme, setTheme } = useDarkMode();
+  const { theme, setTheme, toggleDarkMode, isDark } = useDarkMode();
   const { state: workflowState } = useMRIWorkflow();
   const { unreadCount } = useNotifications();
 
@@ -115,6 +115,19 @@ export default function Navbar({ toggleSidebar, isSidebarCollapsed = true }: Nav
           >
             <MaterialIcon name="add" className="text-[16px] font-bold" />
             <span className="hidden sm:inline">New Scan</span>
+          </button>
+
+          {/* Theme Toggle Button (Light / Dark Mode) */}
+          <button
+            onClick={toggleDarkMode}
+            className="flex items-center justify-center h-8 w-8 rounded-clinical bg-[#EEF5FF] dark:bg-slate-800 border border-clinical-border dark:border-slate-700 text-clinical-textSecondary hover:text-clinical-ink dark:hover:text-white transition-colors cursor-pointer"
+            title={isDark ? t('navbar_theme_light', 'Switch to Light Mode') : t('navbar_theme_dark', 'Switch to Dark Mode')}
+            aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            <MaterialIcon
+              name={isDark ? 'light_mode' : 'dark_mode'}
+              className={`text-[18px] ${isDark ? 'text-amber-400' : 'text-slate-700'}`}
+            />
           </button>
 
           {/* Language Dropdown Selector */}

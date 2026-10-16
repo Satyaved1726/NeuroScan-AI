@@ -42,11 +42,7 @@ export function DarkModeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const toggleDarkMode = () => {
-    setThemeState((prev) => {
-      if (prev === 'light') return 'dark';
-      if (prev === 'dark') return 'medical';
-      return 'light';
-    });
+    setThemeState((prev) => (prev === 'light' ? 'dark' : 'light'));
   };
 
   const isDark = theme === 'dark' || theme === 'medical';
