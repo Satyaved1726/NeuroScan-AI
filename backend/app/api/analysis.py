@@ -54,6 +54,8 @@ def predict_scan(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Model inference failed',
         ) from exc
+    finally:
+        del image_bytes
 
     stage_started_at = perf_counter()
     result_id = str(uuid4())

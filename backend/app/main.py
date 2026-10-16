@@ -5,6 +5,10 @@ def _custom_getaddrinfo(host, port, *args, **kwargs):
     return _original_getaddrinfo(host, port, *args, **kwargs)
 socket.getaddrinfo = _custom_getaddrinfo
 
+# Initialize low-memory CPU-only TensorFlow runtime configuration
+from .ai.config import configure_tensorflow_runtime
+configure_tensorflow_runtime()
+
 from contextlib import asynccontextmanager
 import logging
 

@@ -64,6 +64,26 @@ class TrainingConfig:
         return self.output_dir / self.tensorboard_log_dir_name
 
 
+def configure_tensorflow_runtime() -> None:
+    """Configure TensorFlow for low-memory CPU execution on resource-constrained containers (e.g. Render)."""
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+    os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+    os.environ['OMP_NUM_THREADS'] = '1'
+    os.environ['TF_NUM_INTRAOP_THREADS'] = '1'
+    os.environ['TF_NUM_INTEROP_THREADS'] = '1'
+
+    try:
+        tf.config.set_visible_devices([], 'GPU')
+    except Exception:
+        pass
+    try:
+        tf.config.threading.set_intra_op_parallelism_threads(1)
+        tf.config.threading.set_inter_op_parallelism_threads(1)
+    except Exception:
+        pass
+
+
 def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -83,6 +103,8 @@ def set_reproducible_seeds(seed: int) -> None:
 
 
 def detect_compute_device() -> str:
+    if os.environ.get('CUDA_VISIBLE_DEVICES') == '-1':
+        return 'CPU (Low-memory container mode)'
     physical_gpus = tf.config.list_physical_devices('GPU')
     if physical_gpus:
         for gpu in physical_gpus:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
+import gc
 import json
 import logging
 from pathlib import Path
@@ -12,8 +13,10 @@ import numpy as np
 import tensorflow as tf
 from PIL import Image, UnidentifiedImageError
 
-from .config import TrainingConfig
+from .config import TrainingConfig, configure_tensorflow_runtime
 from .inference import _probabilities_from_model_output, get_model_service
+
+configure_tensorflow_runtime()
 
 logger = logging.getLogger(__name__)
 
@@ -105,14 +108,18 @@ class GradCAMService:
         image_batch, original_image = _preprocess_for_gradcam(image_bytes, self._config)
         preprocess_ms = round((perf_counter() - preprocess_started_at) * 1000, 2)
         heatmap_started_at = perf_counter()
-        with self._generate_lock:
-            heatmap, prediction = self._compute_heatmap(image_batch)
+        model_service = get_model_service()
+        with model_service._predict_lock:
+            with self._generate_lock:
+                heatmap, prediction = self._compute_heatmap(image_batch)
         heatmap_ms = round((perf_counter() - heatmap_started_at) * 1000, 2)
 
         overlay_started_at = perf_counter()
         overlay_png = _overlay_heatmap(original_image, heatmap)
         overlay_ms = round((perf_counter() - overlay_started_at) * 1000, 2)
         total_ms = round((perf_counter() - total_started_at) * 1000, 2)
+        del image_batch, original_image, heatmap
+        gc.collect()
         logger.info(
             'gradcam_generation_timing',
             extra={
@@ -153,6 +160,7 @@ class GradCAMService:
             class_score = predictions[:, class_index]
 
         gradients = tape.gradient(class_score, conv_outputs)
+        del tape
         if gradients is None:
             raise GradCAMError('Failed to calculate Grad-CAM gradients')
 
@@ -168,7 +176,9 @@ class GradCAMService:
         if probabilities.shape[0] != len(self._classes):
             raise GradCAMError(f'Model returned {probabilities.shape[0]} classes, expected {len(self._classes)}')
 
-        return heatmap.numpy(), self._classes[class_index]
+        result_heatmap = heatmap.numpy()
+        del image_tensor, gradients, pooled_gradients, conv_outputs, heatmap
+        return result_heatmap, self._classes[class_index]
 
 
 def get_gradcam_service() -> GradCAMService:

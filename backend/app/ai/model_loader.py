@@ -105,13 +105,16 @@ def build_model(config: TrainingConfig) -> tf.keras.Model:
     return model
 
 
-def load_trained_model(model_path: Path | str) -> tf.keras.Model:
+def load_trained_model(model_path: Path | str, compile: bool = False) -> tf.keras.Model:
+    custom_objects = {
+        'MacroConfusionMetric': MacroConfusionMetric,
+        'MacroPrecision': MacroPrecision,
+        'MacroRecall': MacroRecall,
+        'MacroF1Score': MacroF1Score,
+    } if compile else None
+
     return tf.keras.models.load_model(
         model_path,
-        custom_objects={
-            'MacroConfusionMetric': MacroConfusionMetric,
-            'MacroPrecision': MacroPrecision,
-            'MacroRecall': MacroRecall,
-            'MacroF1Score': MacroF1Score,
-        },
+        compile=compile,
+        custom_objects=custom_objects,
     )

@@ -42,10 +42,12 @@ def analyze_image(file_obj: BinaryIO) -> dict:
     if not content:
         raise ValueError('Empty file received')
 
-    image = Image.open(BytesIO(content))
-    image.load()
-    quality_checks = _quality_checks(image)
-    model_output = get_model_service().predict(content)
+    try:
+        with Image.open(BytesIO(content)) as image:
+            quality_checks = _quality_checks(image)
+        model_output = get_model_service().predict(content)
+    finally:
+        del content
 
     explanation = (
         f'The MRI scan demonstrates imaging patterns associated with {model_output.prediction}. '

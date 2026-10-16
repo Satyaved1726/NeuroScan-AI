@@ -47,6 +47,8 @@ def generate_heatmap(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail='Heatmap generation failed',
         ) from exc
+    finally:
+        del image_bytes
 
     prediction = str(analysis['prediction'])
     if prediction != gradcam_result.prediction:

@@ -13,8 +13,11 @@ import tensorflow as tf
 from PIL import Image, UnidentifiedImageError
 
 from .classes import NUM_CLASSES
-from .config import TrainingConfig
+from .config import TrainingConfig, configure_tensorflow_runtime
 from .model_loader import load_trained_model
+
+# Ensure low-memory CPU configuration
+configure_tensorflow_runtime()
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +83,7 @@ class MRIModelService:
                 raise MRIInferenceError(
                     f'Class mapping contains {len(self._classes)} classes, expected {NUM_CLASSES}'
                 )
-            self._model = load_trained_model(model_path)
+            self._model = load_trained_model(model_path, compile=False)
             output_shape = self._model.output_shape
             output_classes = output_shape[-1] if isinstance(output_shape, tuple) else None
             if output_classes != len(self._classes):
@@ -93,12 +96,16 @@ class MRIModelService:
                 extra={'class_count': len(self._classes), 'classes': self._classes, 'load_ms': load_ms},
             )
 
-            # Warm up the model JIT compile and layers with dummy prediction
+            # Warm up the model JIT compile and layers with lightweight direct tensor pass
             try:
-                logger.info("Warming up TensorFlow model with a dummy prediction...")
+                logger.info("Warming up TensorFlow model with a lightweight forward pass...")
                 warmup_started = perf_counter()
                 dummy_input = np.zeros((1, *self._config.image_size, 3), dtype=np.float32)
-                self._model.predict(dummy_input, verbose=0)
+                tensor_dummy = tf.convert_to_tensor(dummy_input, dtype=tf.float32)
+                _ = self._model(tensor_dummy, training=False)
+                del dummy_input, tensor_dummy
+                import gc
+                gc.collect()
                 warmup_ms = round((perf_counter() - warmup_started) * 1000, 2)
                 logger.info(f"Model warm-up completed in {warmup_ms}ms")
             except Exception as warmup_err:
@@ -125,30 +132,49 @@ class MRIModelService:
         if self._model is None:
             raise MRIInferenceError('MRI prediction model is unavailable')
 
-        preprocess_started_at = perf_counter()
-        image_batch = preprocess_image_bytes(image_bytes, self._config)
-        preprocess_ms = round((perf_counter() - preprocess_started_at) * 1000, 2)
-        inference_started_at = perf_counter()
+        # Limit concurrent predictions to one at a time to prevent memory spikes
         with self._predict_lock:
-            raw_predictions = self._model.predict(image_batch, verbose=0)
-        inference_ms = round((perf_counter() - inference_started_at) * 1000, 2)
+            preprocess_started_at = perf_counter()
+            image_batch = preprocess_image_bytes(image_bytes, self._config)
+            preprocess_ms = round((perf_counter() - preprocess_started_at) * 1000, 2)
 
-        probabilities_array = np.asarray(raw_predictions, dtype=np.float32)[0]
-        if probabilities_array.shape[0] != len(self._classes):
-            raise MRIInferenceError(
-                f'Model returned {probabilities_array.shape[0]} classes, expected {len(self._classes)}'
-            )
+            inference_started_at = perf_counter()
+            tensor_batch = tf.convert_to_tensor(image_batch, dtype=tf.float32)
+            del image_batch
 
-        probabilities_array = _probabilities_from_model_output(probabilities_array)
-        top_index = int(np.argmax(probabilities_array))
-        prediction = self._classes[top_index]
-        probabilities = {
-            class_name: round(float(probabilities_array[index] * 100), 2)
-            for index, class_name in enumerate(self._classes)
-        }
-        confidence = probabilities[prediction]
-        risk_score = calculate_risk_score(probabilities_array, self._classes)
-        total_ms = round((perf_counter() - total_started_at) * 1000, 2)
+            # Direct lightweight forward pass (avoids heavy model.predict XLA/iterator memory allocation)
+            raw_predictions = self._model(tensor_batch, training=False).numpy()
+            del tensor_batch
+            inference_ms = round((perf_counter() - inference_started_at) * 1000, 2)
+
+            probabilities_array = np.asarray(raw_predictions, dtype=np.float32)[0]
+            del raw_predictions
+
+            if probabilities_array.shape[0] != len(self._classes):
+                raise MRIInferenceError(
+                    f'Model returned {probabilities_array.shape[0]} classes, expected {len(self._classes)}'
+                )
+
+            probabilities_array = _probabilities_from_model_output(probabilities_array)
+            top_index = int(np.argmax(probabilities_array))
+            prediction = self._classes[top_index]
+            probabilities = {
+                class_name: round(float(probabilities_array[index] * 100), 2)
+                for index, class_name in enumerate(self._classes)
+            }
+            confidence = probabilities[prediction]
+            risk_score = calculate_risk_score(probabilities_array, self._classes)
+            total_ms = round((perf_counter() - total_started_at) * 1000, 2)
+
+            # Explicit garbage collection to release intermediate tensors
+            import gc
+            gc.collect()
+
+        try:
+            import psutil
+            rss_mb = round(psutil.Process().memory_info().rss / (1024 * 1024), 2)
+        except Exception:
+            rss_mb = None
 
         logger.info(
             'mri_prediction_inference_timing',
@@ -160,6 +186,7 @@ class MRIModelService:
                 'total_ms': total_ms,
                 'prediction': prediction,
                 'confidence': confidence,
+                'rss_mb': rss_mb,
             },
         )
 
