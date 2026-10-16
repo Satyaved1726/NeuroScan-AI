@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Production build outputs
+dist/
+build/
+.dist/
+frontend/dist/
+frontend/.vite/
+
+# Python & testing caches
+__pycache__/
+*.py[cod]
+*$py.class
+backend/__pycache__/
+.pytest_cache/
+backend/.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+backend/.venv/
+backend/venv/
+
+# Environment variables & secrets
+.env
+.env.*
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+
+# Large MRI datasets (approx 700 MB)
+dataset/
+raw_dataset/
+
+# Trained model weights and backup artifacts
+# (Model weights held out pending user approval for LFS vs object storage)
+*.keras
+model/*.keras
+*.bak
+model/*.bak
+*.h5
+
+# Local SQLite databases & mock storage
+*.db
+*.sqlite
+*.sqlite3
+backend/data/*.db
+backend/data/mock_storage/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+pyrefly.toml
+
+# Logs & temporary run artifacts
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript build caches
+*.tsbuildinfo

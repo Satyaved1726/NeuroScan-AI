@@ -1,0 +1,27 @@
+<svg width="80" height="80" viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg">
+  <rect x="0" y="0" width="80" height="80" rx="20" fill="#101827"/>
+  <g stroke="#3E8E85" stroke-width="1.6" fill="none" opacity="0.9">
+    <line x1="24" y1="24" x2="40" y2="18"/>
+    <line x1="40" y1="18" x2="56" y2="24"/>
+    <line x1="24" y1="24" x2="30" y2="40"/>
+    <line x1="56" y1="24" x2="50" y2="40"/>
+    <line x1="30" y1="40" x2="50" y2="40"/>
+    <line x1="30" y1="40" x2="40" y2="54"/>
+    <line x1="50" y1="40" x2="40" y2="54"/>
+    <line x1="40" y1="54" x2="40" y2="64"/>
+  </g>
+  <g fill="#3E8E85">
+    <circle cx="24" cy="24" r="3"/>
+    <circle cx="40" cy="18" r="3"/>
+    <circle cx="56" cy="24" r="3"/>
+    <circle cx="30" cy="40" r="3"/>
+    <circle cx="50" cy="40" r="3"/>
+    <circle cx="40" cy="54" r="3"/>
+    <circle cx="40" cy="64" r="2.4"/>
+  </g>
+  <line x1="10" y1="40" x2="70" y2="40" stroke="#1D4E89" stroke-width="2"/>
+  <line x1="10" y1="35" x2="10" y2="45" stroke="#1D4E89" stroke-width="2"/>
+  <line x1="70" y1="35" x2="70" y2="45" stroke="#1D4E89" stroke-width="2"/>
+  <circle cx="50" cy="40" r="5" fill="none" stroke="#1D4E89" stroke-width="1.6"/>
+  <circle cx="50" cy="40" r="2.4" fill="#F7F8FA"/>
+</svg>

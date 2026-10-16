@@ -1,0 +1,14 @@
+{
+  "name": "neuroscan-ai",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NeuroScan AI - Brain MRI & Clinical Decision Support System",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "preview": "npm --prefix frontend run preview",
+    "lint": "npm --prefix frontend run lint",
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "python -m uvicorn app.main:app --reload --port 8000 --app-dir backend"
+  }
+}

@@ -1,0 +1,413 @@
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hide browser-native reveal/clear password toggle icons (Edge/Chrome/Safari) */
+input::-ms-reveal,
+input::-ms-clear,
+input::-webkit-contacts-auto-fill-button,
+input::-webkit-credentials-auto-fill-button {
+  display: none !important;
+}
+
+:root, [data-theme="light"] {
+  --color-primary:        #006A61; /* Primary Teal */
+  --color-primary-dark:   #005C54; /* Dark Teal */
+  --color-secondary:      #3A82F7; /* Secondary Blue */
+  --color-bg-app:         #F7F9FC; /* Very Light Gray background */
+  --color-bg-surface:     #FFFFFF; /* White cards */
+  --color-bg-sidebar:     #EEF5FF; /* Soft Light Blue sidebar */
+  --color-border:         #DCE7F5; /* Soft Blue border */
+  --color-text-primary:   #0A2540; /* Navy text */
+  --color-text-secondary: #4A607A; /* Muted Navy text */
+
+  --color-status-critical: #D32F2F; /* Danger Red */
+  --color-status-warning:  #F59E0B; /* Warning orange */
+  --color-status-caution:  #F59E0B;
+  --color-status-normal:   #14A44D; /* Success Green */
+  --color-status-info:     #3A82F7;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --color-primary:        #008F82; /* Muted Teal */
+  --color-primary-dark:   #006A61;
+  --color-secondary:      #60A5FA;
+  --color-bg-app:         #0A1128; /* Navy dark background */
+  --color-bg-surface:     #101E36; /* Navy dark card */
+  --color-bg-sidebar:     #0D1B30; /* Darker navy sidebar */
+  --color-border:         #1E2E4B;
+  --color-text-primary:   #EEF5FF;
+  --color-text-secondary: #8A9EB5;
+  --color-status-critical: #D32F2F;
+  --color-status-warning:  #F59E0B;
+  --color-status-caution:  #F59E0B;
+  --color-status-normal:   #14A44D;
+  --color-status-info:     #3A82F7;
+  color-scheme: dark;
+}
+
+[data-theme="medical"] {
+  --color-primary:        #00A699; /* Higher contrast medical teal */
+  --color-primary-dark:   #008F82;
+  --color-secondary:      #3A82F7;
+  --color-bg-app:         #070B12; /* Extreme dark PACS background */
+  --color-bg-surface:     #101622; /* High-density workspace card */
+  --color-bg-sidebar:     #0C111C; /* Dark sidebar */
+  --color-border:         #1E293B; /* Fine slate outline */
+  --color-text-primary:   #E2E8F0; /* Clean light gray text */
+  --color-text-secondary: #64748B; /* Darker secondary slate */
+  --color-status-critical: #D32F2F;
+  --color-status-warning:  #F59E0B;
+  --color-status-caution:  #F59E0B;
+  --color-status-normal:   #14A44D;
+  --color-status-info:     #3A82F7;
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--color-bg-app);
+  color: var(--color-text-primary);
+  transition: background-color 0.2s ease, color 0.2s ease;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Headings styles (Inter clean sans-serif) */
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-text-primary);
+  font-family: 'Inter', -apple-system, sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* Monospace font class for patient logs, rates, and values */
+.font-mono-data {
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: rgba(37, 99, 235, 0.1);
+  color: inherit;
+}
+
+/* Clean grid (deactivated for hospital mode) */
+.millimeter-grid {
+  background-image: none !important;
+  background-color: transparent !important;
+}
+
+.dark .millimeter-grid {
+  background-image: none !important;
+  background-color: transparent !important;
+}
+
+/* Webkit scrollbar rules */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #E2E8F0;
+  border-radius: 9999px;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #CBD5E1;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Card components styling (no shadow, hairline border, 10px radius) */
+.clinical-card {
+  background-color: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 3px rgba(17,24,39,0.05);
+}
+
+/* Custom progress */
+.medical-progress {
+  width: 100%;
+  height: 0.35rem;
+  appearance: none;
+  border: none;
+  border-radius: 9999px;
+  overflow: hidden;
+  background: #E2E8F0;
+}
+
+.dark .medical-progress {
+  background: #334155;
+}
+
+.medical-progress::-webkit-progress-bar {
+  background: #E2E8F0;
+}
+
+.dark .medical-progress::-webkit-progress-bar {
+  background: #334155;
+}
+
+.medical-progress::-webkit-progress-value {
+  background: var(--color-primary);
+}
+
+.medical-progress::-moz-progress-bar {
+  background: var(--color-primary);
+}
+
+/* Professional Form Controls Styling */
+.clinical-input, .clinical-select, .clinical-textarea {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-bg-surface);
+  color: var(--color-text-primary);
+  padding: 0.625rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  outline: none;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.clinical-input:focus, .clinical-select:focus, .clinical-textarea:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(0, 106, 97, 0.15);
+}
+
+.clinical-label {
+  display: block;
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary);
+  margin-bottom: 0.375rem;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(0, 106, 97, 0.15);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+@keyframes successPop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.animate-success-pop {
+  animation: successPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+/* Typography Design System Utility Classes */
+.clinical-h1 {
+  font-family: 'Inter', sans-serif;
+  font-size: 1.75rem; /* 28px */
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.clinical-h2 {
+  font-family: 'Inter', sans-serif;
+  font-size: 1.25rem; /* 20px */
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+
+.clinical-h3 {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.95rem; /* 15.2px */
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+}
+
+.clinical-subtitle {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem; /* 12px */
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.clinical-body {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.75rem; /* 12px */
+  font-weight: 500;
+  color: var(--color-text-primary);
+  line-height: 1.5;
+}
+
+.clinical-caption {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.625rem; /* 10px */
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.075em;
+  color: var(--color-text-secondary);
+}
+
+/* Button & Card Micro-Interactions */
+.btn-ripple {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.btn-ripple:active {
+  transform: scale(0.97);
+}
+
+.card-hover-scale {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-hover-scale:hover {
+  transform: translateY(-2px) scale(1.005);
+}
+
+/* Responsive Table cards reflow on mobile */
+@media (max-w: 640px) {
+  .responsive-table {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .responsive-table thead {
+    display: none !important;
+  }
+
+  .responsive-table tbody {
+    display: block !important;
+    width: 100% !important;
+    background: transparent !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+
+  .responsive-table tr {
+    display: block !important;
+    width: 100% !important;
+    margin-bottom: 1.25rem !important;
+    padding: 1.25rem !important;
+    border-radius: 1.5rem !important;
+    background-color: var(--color-bg-surface) !important;
+    border: 1px solid var(--color-border) !important;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.03) !important;
+  }
+
+  .responsive-table td {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    padding: 0.625rem 0 !important;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.04) !important;
+    font-size: 0.75rem !important;
+    text-align: right !important;
+  }
+
+  .responsive-table td:last-child {
+    border-bottom: none !important;
+    padding-top: 0.875rem !important;
+    justify-content: flex-end !important;
+    gap: 0.625rem !important;
+  }
+
+  .responsive-table td::before {
+    content: attr(data-label) !important;
+    font-weight: 800 !important;
+    text-transform: uppercase !important;
+    font-size: 0.625rem !important;
+    letter-spacing: 0.05em !important;
+    color: var(--color-text-secondary) !important;
+    float: left !important;
+    text-align: left !important;
+    margin-right: 1rem !important;
+  }
+}
+
+
+/* Accessibility override: Font sizes */
+.font-size-small {
+  font-size: 0.825rem !important;
+}
+.font-size-small h1 { font-size: 1.5rem !important; }
+.font-size-small h2 { font-size: 1.25rem !important; }
+.font-size-small h3 { font-size: 1.1rem !important; }
+.font-size-small p, .font-size-small span, .font-size-small td, .font-size-small button, .font-size-small input, .font-size-small textarea { font-size: 0.75rem !important; }
+
+.font-size-large {
+  font-size: 1.125rem !important;
+}
+.font-size-large h1 { font-size: 2.25rem !important; }
+.font-size-large h2 { font-size: 1.85rem !important; }
+.font-size-large h3 { font-size: 1.5rem !important; }
+.font-size-large p, .font-size-large span, .font-size-large td, .font-size-large button, .font-size-large input, .font-size-large textarea { font-size: 1rem !important; }
+
+/* Accessibility override: High Contrast Theme */
+.theme-high-contrast {
+  --color-primary: #000000 !important;
+  --color-primary-dark: #000000 !important;
+  --color-secondary: #0000FF !important;
+  --color-bg-app: #FFFFFF !important;
+  --color-bg-surface: #FFFFFF !important;
+  --color-bg-sidebar: #FFFFFF !important;
+  --color-border: #000000 !important;
+  --color-text-primary: #000000 !important;
+  --color-text-secondary: #000000 !important;
+}
+
+.theme-high-contrast * {
+  border-color: #000000 !important;
+}
