@@ -46,7 +46,7 @@ from .api import health
 from .ai.inference import load_model_once
 from .services.supabase_store import initialize_store
 from .services.supabase_verification import validate_supabase_startup
-from .routers import admin, analysis, assistant, auth, dashboard, mri, profile, reports, users, settings as settings_router, notes
+from .routers import admin, analysis, assistant, auth, clinical, dashboard, mri, profile, reports, users, settings as settings_router, notes
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -167,6 +167,7 @@ app.include_router(reports.router, prefix=settings.api_v1_prefix)
 app.include_router(users.router, prefix=settings.api_v1_prefix)
 app.include_router(settings_router.router, prefix=settings.api_v1_prefix)
 app.include_router(notes.router, prefix=settings.api_v1_prefix)
+app.include_router(clinical.router, prefix=settings.api_v1_prefix)
 app.include_router(health.router)
 app.include_router(prediction_analysis.router)
 app.include_router(prediction_analysis.router, prefix=settings.api_v1_prefix)

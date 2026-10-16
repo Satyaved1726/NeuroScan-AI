@@ -959,8 +959,13 @@ class SupabaseStore:
                 cursor.close()
             self.db.return_connection(conn)
 
-    def get_report(self, report_id: str, user_id: str | None = None) -> StoredAnalysis | None:
-        """Fetch a single report by report identifier."""
+    def get_report(
+        self,
+        report_id: str,
+        user_id: str | None = None,
+        requesting_role: str | None = None,
+    ) -> StoredAnalysis | None:
+        """Fetch a single report by report identifier with role-aware authorization."""
         conn = self.db.get_connection()
         cursor = None
         try:
@@ -968,8 +973,20 @@ class SupabaseStore:
             clauses = ['ah.report_id = %s']
             params: list[Any] = [report_id]
             if user_id:
-                clauses.append('ah.user_id = %s')
-                params.append(user_id)
+                if requesting_role in ('Admin',):
+                    pass
+                elif requesting_role in ('Doctor',):
+                    clauses.append(
+                        """(
+                            dpa.doctor_id = %s
+                            OR s.reviewed_by = %s
+                            OR dpa.doctor_id IS NULL
+                        )"""
+                    )
+                    params.extend([user_id, user_id])
+                else:
+                    clauses.append('ah.user_id = %s')
+                    params.append(user_id)
             cursor.execute(
                 f"""
                 SELECT
@@ -994,6 +1011,8 @@ class SupabaseStore:
                     ON ar.scan_id = ah.scan_id AND ar.user_id = ah.user_id
                 LEFT JOIN scans s
                     ON s.id = ah.scan_id AND s.user_id = ah.user_id
+                LEFT JOIN doctor_patient_assignments dpa
+                    ON dpa.patient_id = ah.user_id AND dpa.status = 'Active'
                 WHERE {' AND '.join(clauses)}
                 ORDER BY ah.created_at DESC
                 LIMIT 1
@@ -1028,8 +1047,13 @@ class SupabaseStore:
                 cursor.close()
             self.db.return_connection(conn)
 
-    def get_analysis_by_scan_id(self, scan_id: str, user_id: str | None = None) -> StoredAnalysis | None:
-        """Fetch a single analysis by scan identifier."""
+    def get_analysis_by_scan_id(
+        self,
+        scan_id: str,
+        user_id: str | None = None,
+        requesting_role: str | None = None,
+    ) -> StoredAnalysis | None:
+        """Fetch a single analysis by scan identifier with role-aware authorization."""
         conn = self.db.get_connection()
         cursor = None
         try:
@@ -1037,8 +1061,20 @@ class SupabaseStore:
             clauses = ['ah.scan_id = %s']
             params: list[Any] = [scan_id]
             if user_id:
-                clauses.append('ah.user_id = %s')
-                params.append(user_id)
+                if requesting_role in ('Admin',):
+                    pass
+                elif requesting_role in ('Doctor',):
+                    clauses.append(
+                        """(
+                            dpa.doctor_id = %s
+                            OR s.reviewed_by = %s
+                            OR dpa.doctor_id IS NULL
+                        )"""
+                    )
+                    params.extend([user_id, user_id])
+                else:
+                    clauses.append('ah.user_id = %s')
+                    params.append(user_id)
             cursor.execute(
                 f"""
                 SELECT
@@ -1063,6 +1099,8 @@ class SupabaseStore:
                     ON ar.scan_id = ah.scan_id AND ar.user_id = ah.user_id
                 LEFT JOIN scans s
                     ON s.id = ah.scan_id AND s.user_id = ah.user_id
+                LEFT JOIN doctor_patient_assignments dpa
+                    ON dpa.patient_id = ah.user_id AND dpa.status = 'Active'
                 WHERE {' AND '.join(clauses)}
                 ORDER BY ah.created_at DESC
                 LIMIT 1
@@ -1931,6 +1969,571 @@ class SupabaseStore:
                 original_image_url=_scan_image_url(row),
                 heatmap_url=row['heatmap_url'],
             )
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def assign_patient_to_doctor(
+        self,
+        doctor_id: str,
+        patient_id: str,
+        assigned_by: str | None = None,
+    ) -> dict[str, Any]:
+        """Assign or update patient assignment to a clinician."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                UPDATE doctor_patient_assignments
+                SET status = 'Inactive', updated_at = CURRENT_TIMESTAMP
+                WHERE patient_id = %s AND status = 'Active'
+                """,
+                (patient_id,),
+            )
+            assignment_id = str(uuid4())
+            cursor.execute(
+                """
+                INSERT INTO doctor_patient_assignments (id, doctor_id, patient_id, assigned_by, status, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, 'Active', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                RETURNING id, doctor_id, patient_id, assigned_by, status, created_at
+                """,
+                (assignment_id, doctor_id, patient_id, assigned_by),
+            )
+            row = cursor.fetchone()
+            conn.commit()
+
+            cursor.execute("SELECT full_name FROM users WHERE id = %s", (doctor_id,))
+            doc_row = cursor.fetchone()
+            cursor.execute(
+                "SELECT COALESCE(full_name, name) AS name FROM users WHERE id = %s",
+                (patient_id,),
+            )
+            pat_row = cursor.fetchone()
+
+            return {
+                'id': str(row['id']),
+                'doctor_id': str(row['doctor_id']),
+                'doctor_name': doc_row['full_name'] if doc_row else 'Clinician',
+                'patient_id': str(row['patient_id']),
+                'patient_name': pat_row['name'] if pat_row else 'Patient',
+                'assigned_by': str(row['assigned_by']) if row['assigned_by'] else None,
+                'status': row['status'],
+                'created_at': row['created_at'],
+            }
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to assign patient to doctor: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def get_assigned_doctor(self, patient_id: str) -> dict[str, Any] | None:
+        """Fetch currently active clinician assignment for a patient."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                SELECT dpa.id, dpa.doctor_id, dpa.patient_id, u.full_name AS doctor_name, u.email AS doctor_email, dpa.status, dpa.created_at
+                FROM doctor_patient_assignments dpa
+                JOIN users u ON u.id = dpa.doctor_id
+                WHERE dpa.patient_id = %s AND dpa.status = 'Active'
+                ORDER BY dpa.created_at DESC
+                LIMIT 1
+                """,
+                (patient_id,),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                'id': str(row['id']),
+                'doctor_id': str(row['doctor_id']),
+                'patient_id': str(row['patient_id']),
+                'doctor_name': row['doctor_name'],
+                'doctor_email': row['doctor_email'],
+                'status': row['status'],
+                'created_at': row['created_at'],
+            }
+        except Exception as e:
+            logger.error(f"Failed to get assigned doctor: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def is_patient_assigned_to_doctor(self, patient_id: str, doctor_id: str) -> bool:
+        """Verify if patient is actively assigned to given doctor."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 1 FROM doctor_patient_assignments
+                WHERE patient_id = %s AND doctor_id = %s AND status = 'Active'
+                LIMIT 1
+                """,
+                (patient_id, doctor_id),
+            )
+            return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Failed to check assignment: {e}")
+            return False
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def get_doctor_summary(self, doctor_id: str) -> dict[str, Any]:
+        """Aggregate truthful metrics for an authorized clinician."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT patient_id)::int AS assigned_patients
+                FROM doctor_patient_assignments
+                WHERE doctor_id = %s AND status = 'Active'
+                """,
+                (doctor_id,),
+            )
+            pat_row = cursor.fetchone() or {}
+            assigned_patients = int(pat_row.get('assigned_patients') or 0)
+
+            cursor.execute(
+                """
+                SELECT
+                    COUNT(DISTINCT s.id) FILTER (WHERE COALESCE(s.review_status, 'awaiting_review') IN ('awaiting_review', 'uploaded', 'processing'))::int AS scans_awaiting_review,
+                    COUNT(DISTINCT s.id) FILTER (WHERE s.review_status = 'reviewed' OR s.reviewed_by = %s)::int AS reviewed_scans,
+                    COUNT(DISTINCT s.id) FILTER (WHERE s.status = 'failed' OR s.review_status = 'requires_retest')::int AS failed_scans
+                FROM scans s
+                LEFT JOIN doctor_patient_assignments dpa
+                    ON dpa.patient_id = s.user_id AND dpa.status = 'Active'
+                WHERE dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL
+                """,
+                (doctor_id, doctor_id, doctor_id),
+            )
+            scan_counts = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT r.id)::int AS reports_ready
+                FROM reports r
+                LEFT JOIN doctor_patient_assignments dpa
+                    ON dpa.patient_id = r.user_id AND dpa.status = 'Active'
+                WHERE (dpa.doctor_id = %s OR dpa.doctor_id IS NULL)
+                  AND r.status = 'generated'
+                  AND COALESCE(r.review_status, 'awaiting_review') = 'awaiting_review'
+                """,
+                (doctor_id,),
+            )
+            rep_counts = cursor.fetchone() or {}
+
+            cursor.execute(
+                """
+                SELECT COUNT(DISTINCT ah.id)::int AS urgent_cases
+                FROM analysis_history ah
+                LEFT JOIN doctor_patient_assignments dpa
+                    ON dpa.patient_id = ah.user_id AND dpa.status = 'Active'
+                WHERE (dpa.doctor_id = %s OR dpa.doctor_id IS NULL)
+                  AND ah.risk_category IN ('High', 'Critical')
+                """,
+                (doctor_id,),
+            )
+            urg_counts = cursor.fetchone() or {}
+
+            queue_items = self.list_clinical_queue(doctor_id=doctor_id, limit=10)
+            worklist_items = self.list_patient_worklist(doctor_id=doctor_id, limit=10)
+
+            return {
+                'assigned_patients': assigned_patients,
+                'scans_awaiting_review': int(scan_counts.get('scans_awaiting_review') or 0),
+                'reports_ready': int(rep_counts.get('reports_ready') or 0),
+                'reviewed_scans': int(scan_counts.get('reviewed_scans') or 0),
+                'failed_scans': int(scan_counts.get('failed_scans') or 0),
+                'urgent_cases': int(urg_counts.get('urgent_cases') or 0),
+                'review_queue': queue_items,
+                'recent_patients': worklist_items,
+            }
+        except Exception as e:
+            logger.error(f"Failed to build doctor summary: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def list_clinical_queue(
+        self,
+        doctor_id: str | None = None,
+        status_filter: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List review queue items with filter support."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            clauses = []
+            params: list[Any] = []
+
+            if doctor_id:
+                clauses.append("(dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL)")
+                params.extend([doctor_id, doctor_id])
+
+            if status_filter:
+                norm_status = status_filter.lower().strip()
+                if norm_status in ('awaiting_review', 'awaiting review'):
+                    clauses.append("COALESCE(s.review_status, 'awaiting_review') = 'awaiting_review'")
+                elif norm_status in ('reviewed',):
+                    clauses.append("COALESCE(s.review_status, 'awaiting_review') = 'reviewed'")
+                elif norm_status in ('prediction_ready', 'prediction ready'):
+                    clauses.append("ah.prediction IS NOT NULL")
+                elif norm_status in ('report_ready', 'report ready'):
+                    clauses.append("r.status = 'generated'")
+                elif norm_status in ('failed', 'requires_retest'):
+                    clauses.append("(s.status = 'failed' OR s.review_status = 'requires_retest')")
+
+            if date_from:
+                clauses.append("s.created_at >= %s")
+                params.append(date_from)
+            if date_to:
+                clauses.append("s.created_at <= %s")
+                params.append(date_to)
+
+            if search:
+                clauses.append("(s.id::text ILIKE %s OR u.full_name ILIKE %s OR pp.patient_id ILIKE %s OR ah.prediction ILIKE %s)")
+                p = f'%{search}%'
+                params.extend([p, p, p, p])
+
+            where_str = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+            params.extend([limit, offset])
+
+            cursor.execute(
+                f"""
+                SELECT
+                    s.id AS scan_id,
+                    s.user_id AS patient_id,
+                    COALESCE(pp.full_name, u.full_name, u.email, 'Unknown Patient') AS patient_name,
+                    COALESCE(pp.patient_id, 'PT-' || SUBSTRING(s.user_id::text, 1, 8)) AS patient_identifier,
+                    s.created_at AS scan_date,
+                    ah.prediction,
+                    ah.confidence,
+                    ah.risk_category,
+                    r.id AS report_row_id,
+                    ah.report_id,
+                    COALESCE(r.status, 'pending') AS report_status,
+                    COALESCE(s.review_status, 'awaiting_review') AS review_status,
+                    doc_user.full_name AS assigned_doctor,
+                    rev_user.full_name AS reviewer_name,
+                    s.reviewed_at,
+                    s.review_notes,
+                    s.image_url AS original_image_url,
+                    s.storage_bucket AS original_storage_bucket,
+                    s.storage_path AS original_storage_path,
+                    ar.heatmap_url
+                FROM scans s
+                JOIN users u ON u.id = s.user_id
+                LEFT JOIN patient_profiles pp ON pp.user_id = s.user_id
+                LEFT JOIN doctor_patient_assignments dpa ON dpa.patient_id = s.user_id AND dpa.status = 'Active'
+                LEFT JOIN users doc_user ON doc_user.id = dpa.doctor_id
+                LEFT JOIN users rev_user ON rev_user.id = s.reviewed_by
+                LEFT JOIN analysis_history ah ON ah.scan_id = s.id
+                LEFT JOIN analysis_results ar ON ar.scan_id = s.id
+                LEFT JOIN reports r ON r.scan_id = s.id
+                {where_str}
+                ORDER BY s.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
+            rows = cursor.fetchall()
+            items = []
+            for r in rows:
+                items.append({
+                    'id': str(r['scan_id']),
+                    'scan_id': str(r['scan_id']),
+                    'patient_id': str(r['patient_id']),
+                    'patient_name': r['patient_name'],
+                    'patient_identifier': r['patient_identifier'],
+                    'date': r['scan_date'],
+                    'prediction': r['prediction'],
+                    'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                    'risk_category': r['risk_category'],
+                    'report_id': str(r['report_id']) if r['report_id'] else None,
+                    'report_status': r['report_status'],
+                    'review_status': r['review_status'],
+                    'assigned_doctor': r['assigned_doctor'],
+                    'reviewer_name': r['reviewer_name'],
+                    'reviewed_at': r['reviewed_at'],
+                    'review_notes': r['review_notes'],
+                    'original_image_url': _scan_image_url(r),
+                    'heatmap_url': r['heatmap_url'],
+                })
+            return items
+        except Exception as e:
+            logger.error(f"Failed to list clinical queue: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def list_patient_worklist(
+        self,
+        doctor_id: str,
+        search: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """List patients actively assigned to the clinician."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            clauses = ["dpa.doctor_id = %s", "dpa.status = 'Active'"]
+            params: list[Any] = [doctor_id]
+
+            if search:
+                clauses.append("(u.full_name ILIKE %s OR pp.patient_id ILIKE %s OR u.email ILIKE %s)")
+                p = f'%{search}%'
+                params.extend([p, p, p])
+
+            where_str = f"WHERE {' AND '.join(clauses)}"
+            params.extend([limit, offset])
+
+            cursor.execute(
+                f"""
+                SELECT
+                    u.id AS user_id,
+                    COALESCE(pp.patient_id, 'PT-' || SUBSTRING(u.id::text, 1, 8)) AS patient_id,
+                    COALESCE(pp.full_name, u.full_name, u.email) AS full_name,
+                    pp.age,
+                    pp.gender,
+                    pp.blood_group,
+                    u.total_scans,
+                    dpa.status AS assignment_status,
+                    latest_scan.created_at AS latest_scan_date,
+                    latest_scan.prediction AS latest_prediction,
+                    latest_scan.risk_category AS latest_risk,
+                    COALESCE(latest_scan.review_status, 'No Scans') AS review_status
+                FROM doctor_patient_assignments dpa
+                JOIN users u ON u.id = dpa.patient_id
+                LEFT JOIN patient_profiles pp ON pp.user_id = u.id
+                LEFT JOIN LATERAL (
+                    SELECT s.created_at, ah.prediction, ah.risk_category, s.review_status
+                    FROM scans s
+                    LEFT JOIN analysis_history ah ON ah.scan_id = s.id
+                    WHERE s.user_id = u.id
+                    ORDER BY s.created_at DESC
+                    LIMIT 1
+                ) latest_scan ON TRUE
+                {where_str}
+                ORDER BY dpa.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                tuple(params),
+            )
+            rows = cursor.fetchall()
+            items = []
+            for r in rows:
+                items.append({
+                    'patient_id': str(r['patient_id']),
+                    'user_id': str(r['user_id']),
+                    'full_name': r['full_name'],
+                    'age': r['age'],
+                    'gender': r['gender'],
+                    'blood_group': r['blood_group'],
+                    'total_scans': int(r['total_scans'] or 0),
+                    'latest_scan_date': r['latest_scan_date'],
+                    'latest_prediction': r['latest_prediction'],
+                    'latest_risk': r['latest_risk'],
+                    'review_status': r['review_status'] or 'No Scans',
+                    'assignment_status': r['assignment_status'],
+                })
+            return items
+        except Exception as e:
+            logger.error(f"Failed to list patient worklist: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def record_clinical_review(
+        self,
+        scan_id: str,
+        doctor_id: str,
+        review_status: str,
+        review_notes: str | None = None,
+    ) -> dict[str, Any]:
+        """Record clinician review decision, timestamp, notes and reviewer identity."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            now = datetime.now(timezone.utc)
+            cursor.execute(
+                """
+                UPDATE scans
+                SET review_status = %s,
+                    reviewed_by = %s,
+                    reviewed_at = %s,
+                    review_notes = %s
+                WHERE id = %s
+                RETURNING id, user_id, review_status, reviewed_by, reviewed_at, review_notes
+                """,
+                (review_status, doctor_id, now, review_notes, scan_id),
+            )
+            scan_row = cursor.fetchone()
+            if not scan_row:
+                raise ValueError(f"Scan {scan_id} not found")
+
+            cursor.execute(
+                """
+                UPDATE reports
+                SET review_status = %s,
+                    reviewed_by = %s,
+                    reviewed_at = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE scan_id = %s
+                """,
+                (review_status, doctor_id, now, scan_id),
+            )
+
+            if review_notes and review_notes.strip():
+                note_id = str(uuid4())
+                cursor.execute(
+                    """
+                    INSERT INTO doctor_notes (id, scan_id, doctor_id, title, note, severity, created_at, updated_at)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (note_id, scan_id, doctor_id, 'Clinical Review Note', review_notes.strip(), 'Normal', now, now),
+                )
+
+            import json
+            try:
+                cursor.execute(
+                    """
+                    INSERT INTO audit_logs (id, user_id, action, resource_type, resource_id, metadata, created_at)
+                    VALUES (%s, %s, 'clinical_review_recorded', 'scan', %s, %s, %s)
+                    """,
+                    (
+                        str(uuid4()),
+                        doctor_id,
+                        scan_id,
+                        json.dumps({'review_status': review_status, 'notes_included': bool(review_notes)}),
+                        now,
+                    ),
+                )
+            except Exception as audit_err:
+                logger.warning(f"Audit log writing skipped: {audit_err}")
+
+            conn.commit()
+
+            cursor.execute("SELECT full_name FROM users WHERE id = %s", (doctor_id,))
+            doc_user = cursor.fetchone()
+
+            return {
+                'scan_id': str(scan_row['id']),
+                'review_status': scan_row['review_status'],
+                'reviewed_by': str(scan_row['reviewed_by']),
+                'reviewer_name': doc_user['full_name'] if doc_user else 'Clinician',
+                'reviewed_at': scan_row['reviewed_at'],
+                'notes': scan_row['review_notes'],
+            }
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to record clinical review: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def can_user_access_scan(self, user_id: str, role: str, scan_id: str) -> bool:
+        """Enforce backend authorization check on a scan record."""
+        if role in ('Admin',):
+            return True
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            if role in ('User',):
+                cursor.execute("SELECT 1 FROM scans WHERE id = %s AND user_id = %s", (scan_id, user_id))
+                return cursor.fetchone() is not None
+            elif role in ('Doctor',):
+                cursor.execute(
+                    """
+                    SELECT 1 FROM scans s
+                    LEFT JOIN doctor_patient_assignments dpa
+                        ON dpa.patient_id = s.user_id AND dpa.status = 'Active'
+                    WHERE s.id = %s
+                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL)
+                    LIMIT 1
+                    """,
+                    (scan_id, user_id, user_id),
+                )
+                return cursor.fetchone() is not None
+            return False
+        except Exception as e:
+            logger.error(f"Failed scan authorization check: {e}")
+            return False
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def can_user_access_report(self, user_id: str, role: str, report_id: str) -> bool:
+        """Enforce backend authorization check on a report record."""
+        if role in ('Admin',):
+            return True
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            if role in ('User',):
+                cursor.execute(
+                    """
+                    SELECT 1 FROM analysis_history ah
+                    WHERE ah.report_id = %s AND ah.user_id = %s
+                    LIMIT 1
+                    """,
+                    (report_id, user_id),
+                )
+                return cursor.fetchone() is not None
+            elif role in ('Doctor',):
+                cursor.execute(
+                    """
+                    SELECT 1 FROM analysis_history ah
+                    JOIN scans s ON s.id = ah.scan_id
+                    LEFT JOIN doctor_patient_assignments dpa
+                        ON dpa.patient_id = ah.user_id AND dpa.status = 'Active'
+                    WHERE ah.report_id = %s
+                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL)
+                    LIMIT 1
+                    """,
+                    (report_id, user_id, user_id),
+                )
+                return cursor.fetchone() is not None
+            return False
+        except Exception as e:
+            logger.error(f"Failed report authorization check: {e}")
+            return False
         finally:
             if cursor is not None:
                 cursor.close()

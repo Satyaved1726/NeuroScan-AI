@@ -221,6 +221,108 @@ export async function fetchRiskDistribution(): Promise<RiskDistributionItem[]> {
   }
 }
 
+export interface ClinicalQueueItem {
+  id: string;
+  scan_id: string;
+  patient_id: string;
+  patient_name: string;
+  patient_identifier: string;
+  date: string;
+  prediction: string | null;
+  confidence: number | null;
+  risk_category: string | null;
+  report_id: string | null;
+  report_status: string;
+  review_status: string;
+  assigned_doctor: string | null;
+  reviewer_name?: string | null;
+  reviewed_at?: string | null;
+  review_notes?: string | null;
+  original_image_url?: string | null;
+  heatmap_url?: string | null;
+}
+
+export interface PatientWorklistItem {
+  patient_id: string;
+  user_id: string;
+  full_name: string;
+  age: number | null;
+  gender: string | null;
+  blood_group: string | null;
+  total_scans: number;
+  latest_scan_date: string | null;
+  latest_prediction: string | null;
+  latest_risk: string | null;
+  review_status: string;
+  assignment_status: string;
+}
+
+export interface DoctorDashboardData {
+  assigned_patients: number;
+  scans_awaiting_review: number;
+  reports_ready: number;
+  reviewed_scans: number;
+  failed_scans: number;
+  urgent_cases: number;
+  review_queue: ClinicalQueueItem[];
+  recent_patients: PatientWorklistItem[];
+}
+
+export async function fetchDoctorDashboardData(): Promise<DoctorDashboardData> {
+  try {
+    const response = await apiClient.get<DoctorDashboardData>('/dashboard/doctor');
+    return response.data;
+  } catch (error) {
+    throw normalizeDashboardError(error);
+  }
+}
+
+export async function fetchClinicalQueue(params?: {
+  status?: string;
+  q?: string;
+  date_from?: string;
+  date_to?: string;
+}): Promise<ClinicalQueueItem[]> {
+  try {
+    const response = await apiClient.get<ClinicalQueueItem[]>('/clinical/queue', { params });
+    return response.data;
+  } catch (error) {
+    throw normalizeDashboardError(error);
+  }
+}
+
+export async function fetchPatientWorklist(search?: string): Promise<PatientWorklistItem[]> {
+  try {
+    const response = await apiClient.get<PatientWorklistItem[]>('/clinical/patients', {
+      params: search ? { q: search } : undefined,
+    });
+    return response.data;
+  } catch (error) {
+    throw normalizeDashboardError(error);
+  }
+}
+
+export async function submitClinicalReview(
+  scanId: string,
+  payload: { review_status: string; notes?: string }
+): Promise<{ scan_id: string; review_status: string; reviewer_name: string; reviewed_at: string; notes?: string }> {
+  try {
+    const response = await apiClient.post(`/clinical/scans/${scanId}/review`, payload);
+    return response.data;
+  } catch (error) {
+    throw normalizeDashboardError(error);
+  }
+}
+
+export async function fetchPatientAssignment(patientId: string): Promise<any> {
+  try {
+    const response = await apiClient.get(`/clinical/assignments/patient/${patientId}`);
+    return response.data;
+  } catch (error) {
+    throw normalizeDashboardError(error);
+  }
+}
+
 function normalizeDashboardError(error: unknown): ApiError {
   if (error instanceof ApiError) {
     return error;

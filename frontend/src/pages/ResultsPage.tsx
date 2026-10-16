@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, PointerEvent } from 'react';
+import { useEffect, useMemo, useState, useRef, PointerEvent } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { motion } from 'framer-motion';
@@ -11,7 +11,6 @@ import { fetchLatestAnalysis, generateHeatmap } from '../services/mriService';
 import { fetchAnalysisHistory } from '../services/historyService';
 import { fetchDoctorNotes, addDoctorNote, type DoctorNote } from '../services/notesService';
 import { PredictionResult } from '../types/mri-workflow';
-import { PredictionLabel, RiskLevel } from '../types';
 import { normalizeError, getUserFriendlyMessage } from '../utils/errorHandler';
 import EmptyState from '../components/EmptyState';
 import MaterialIcon from '../components/MaterialIcon';
@@ -23,30 +22,30 @@ const CLASS_STYLES: Record<ClassKey, { label: string; color: string; badge: stri
   NonDemented: {
     label: 'Non Demented',
     color: '#14A44D',
-    badge: 'bg-[#14A44D]/10 text-[#14A44D] border border-[#14A44D]/20',
+    badge: 'bg-[#14A44D]/10 text-[#14A44D] border border-[#14A44D]/25',
     text: 'text-[#14A44D]',
     bg: 'from-[#14A44D]/5 to-transparent',
   },
   VeryMildDemented: {
     label: 'Very Mild Demented',
-    color: '#3A82F7',
-    badge: 'bg-[#3A82F7]/10 text-[#3A82F7] border border-[#3A82F7]/20',
-    text: 'text-[#3A82F7]',
-    bg: 'from-[#3A82F7]/5 to-transparent',
+    color: '#2563EB',
+    badge: 'bg-[#2563EB]/10 text-[#2563EB] border border-[#2563EB]/25',
+    text: 'text-[#2563EB]',
+    bg: 'from-[#2563EB]/5 to-transparent',
   },
   MildDemented: {
     label: 'Mild Demented',
-    color: '#F59E0B',
-    badge: 'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/20',
-    text: 'text-[#F59E0B]',
-    bg: 'from-[#F59E0B]/5 to-transparent',
+    color: '#D97706',
+    badge: 'bg-[#D97706]/10 text-[#D97706] border border-[#D97706]/25',
+    text: 'text-[#D97706]',
+    bg: 'from-[#D97706]/5 to-transparent',
   },
   ModerateDemented: {
     label: 'Moderate Demented',
-    color: '#D32F2F',
-    badge: 'bg-[#D32F2F]/10 text-[#D32F2F] border border-[#D32F2F]/20',
-    text: 'text-[#D32F2F]',
-    bg: 'from-[#D32F2F]/5 to-transparent',
+    color: '#DC2626',
+    badge: 'bg-[#DC2626]/10 text-[#DC2626] border border-[#DC2626]/25',
+    text: 'text-[#DC2626]',
+    bg: 'from-[#DC2626]/5 to-transparent',
   },
 };
 
@@ -59,25 +58,6 @@ const UNKNOWN_CLASS_STYLE = {
 };
 
 const RECOMMENDATION_CATEGORIES = ['Medical', 'Lifestyle', 'Nutrition', 'Exercise', 'MentalHealth', 'FollowUp'];
-
-const EDUCATION: Record<ClassKey, string[]> = {
-  NonDemented: [
-    'No measurable cognitive degeneration or volumetric loss mapped inside hippocampal boundaries.',
-    'Observe baseline coordinates during biennial screening sessions.'
-  ],
-  VeryMildDemented: [
-    'Voxel alignment tracks early synaptic density changes or focal temporal parameters.',
-    'Recommend primary monitoring indices for cognitive performance checks.'
-  ],
-  MildDemented: [
-    'Volumetric decrease mapped in hippocampal structures, tracking clinical symptoms.',
-    'Cognitive exercises, lifestyle adjustments, and specialty diagnostic validation recommended.'
-  ],
-  ModerateDemented: [
-    'Severe voxel density loss, coordinate degradation, and volume shrinkage.',
-    'Direct referral to clinical specialists, medication reviews, and secondary diagnostic verification required.'
-  ]
-};
 
 function normalizeClassName(label: string): ClassKey {
   const clean = label.replace(/\s+/g, '').toLowerCase();
@@ -121,17 +101,17 @@ const getStatusTextStyle = (risk: string | null | undefined) => {
   switch (risk?.toLowerCase()) {
     case 'critical':
     case 'high':
-      return 'text-clinical-status-critical font-semibold';
+      return 'text-clinical-status-critical font-bold';
     case 'medium':
     case 'moderate':
-      return 'text-clinical-status-warning font-semibold';
+      return 'text-clinical-status-warning font-bold';
     case 'normal':
     case 'low':
     case 'stable':
     case 'non-demented':
-      return 'text-clinical-status-normal font-semibold';
+      return 'text-clinical-status-normal font-bold';
     default:
-      return 'text-clinical-textSecondary';
+      return 'text-clinical-textSecondary font-semibold';
   }
 };
 
@@ -155,7 +135,7 @@ export default function ResultsPage() {
   const [isTimelineLoading, setIsTimelineLoading] = useState(true);
 
   // Viewport states
-  const [activeViewTab, setActiveViewTab] = useState<'original' | 'heatmap' | 'compare' | 'sideBySide'>('heatmap');
+  const [activeViewTab, setActiveViewTab] = useState<'original' | 'heatmap' | 'heatmapOnly' | 'compare' | 'sideBySide'>('heatmap');
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragStart, setDragStart] = useState<{ x: number; y: number; panX: number; panY: number } | null>(null);
@@ -166,7 +146,9 @@ export default function ResultsPage() {
   const [isInverted, setIsInverted] = useState(false);
   const [selectedLut, setSelectedLut] = useState<'none' | 'hot' | 'cool' | 'sepia' | 'emerald'>('none');
   const [showHud, setShowHud] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
+  const viewerContainerRef = useRef<HTMLDivElement>(null);
   const { user } = useAuth();
   const toast = useToastContext();
 
@@ -176,13 +158,32 @@ export default function ResultsPage() {
   const [newNoteContent, setNewNoteContent] = useState('');
   const [newNoteSeverity, setNewNoteSeverity] = useState<'Low' | 'Medium' | 'High'>('Low');
 
+  // Fullscreen support
+  const toggleFullscreen = () => {
+    if (!viewerContainerRef.current) return;
+    if (!document.fullscreenElement) {
+      viewerContainerRef.current.requestFullscreen().catch(() => {});
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen().catch(() => {});
+      setIsFullscreen(false);
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
+
   useEffect(() => {
     if (scanId) {
-      fetchDoctorNotes(scanId).then((data) => {
-        setDoctorNotesList(data);
-      }).catch(() => {});
+      fetchDoctorNotes(scanId)
+        .then((data) => setDoctorNotesList(data))
+        .catch(() => {});
     }
   }, [scanId]);
+
   const activeClass = prediction ? normalizeClassName(prediction.label) : null;
   const activeStyle = activeClass ? CLASS_STYLES[activeClass] : UNKNOWN_CLASS_STYLE;
 
@@ -194,7 +195,7 @@ export default function ResultsPage() {
       return {
         className: key,
         displayName: style.label,
-        probability: (val as number) * 100,
+        probability: Number(val),
         color: style.color,
       };
     });
@@ -272,7 +273,7 @@ export default function ResultsPage() {
     loadResults();
   }, [scanId, routeState, toast]);
 
-  // Background fetch of heatmap if scan is loaded but heatmap was deferred or not yet loaded
+  // Background fetch of heatmap if scan is loaded but heatmap was deferred
   useEffect(() => {
     const currentScanId = prediction?.scanId ?? scanId;
     if (currentScanId && !heatmapUrl && !isLoading) {
@@ -283,7 +284,7 @@ export default function ResultsPage() {
           }
         })
         .catch(() => {
-          // Heatmap is optional explainability; gracefully preserve base MRI
+          // Heatmap is optional explainability; keep base MRI visible
         });
     }
   }, [prediction?.scanId, scanId, heatmapUrl, isLoading]);
@@ -339,7 +340,7 @@ export default function ResultsPage() {
       return;
     }
     if (!newNoteTitle.trim() || !newNoteContent.trim()) {
-      toast.error('Please fill in both the title and content fields');
+      toast.error('Please fill in both the title and observation fields');
       return;
     }
     try {
@@ -348,9 +349,9 @@ export default function ResultsPage() {
       setNewNoteTitle('');
       setNewNoteContent('');
       setNewNoteSeverity('Low');
-      toast.success('Clinical observation note added successfully');
-    } catch (err) {
-      toast.error('Failed to add observation note to the database');
+      toast.success('Clinical observation note saved');
+    } catch {
+      toast.error('Failed to save observation note');
     }
   };
 
@@ -398,13 +399,13 @@ export default function ResultsPage() {
 
   if (error || !prediction) {
     return (
-      <div className="py-20 text-center space-y-4 max-w-md mx-auto font-sans">
+      <div className="py-16 sm:py-20 text-center space-y-4 max-w-md mx-auto font-sans px-4">
         <MaterialIcon name="warning" className="text-[44px] text-clinical-status-critical mx-auto" />
-        <h3 className="text-xl font-semibold text-clinical-ink dark:text-white">Workspace Offline</h3>
+        <h2 className="text-lg sm:text-xl font-bold text-clinical-ink dark:text-white">Scan Results Unavailable</h2>
         <p className="text-xs text-clinical-textSecondary">{error || 'Could not map prediction records'}</p>
         <button
           onClick={() => window.location.reload()}
-          className="px-4 py-2 bg-clinical-primary text-white rounded-clinical text-xs font-semibold"
+          className="min-h-[44px] px-5 py-2.5 bg-clinical-primary text-white rounded-clinical text-xs font-bold shadow-soft"
         >
           Retry Connection
         </button>
@@ -415,56 +416,185 @@ export default function ResultsPage() {
   const originalImage = prediction.originalImageUrl || previewImage;
   const scanDate = formatDateTime(prediction.dateOfScan ?? prediction.timestamp);
 
+  // Truthful plain-language explanation generated from actual model output
+  const plainLanguageExplanation = `The AI model classified this MRI image as ${prediction.label} with ${prediction.confidence.toFixed(1)}% model confidence. This is an automated screening prediction and is not a confirmed clinical diagnosis. A qualified clinician should review the image alongside the patient's full clinical history and neurological evaluations.`;
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 15 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -15 }}
       transition={{ duration: 0.35, ease: 'easeOut' }}
-      className="space-y-6 font-sans antialiased text-clinical-textPrimary dark:text-white"
+      className="space-y-6 font-sans antialiased text-clinical-textPrimary dark:text-white px-2 sm:px-4 max-w-7xl mx-auto"
     >
+      {/* SECTION A: SCAN HEADER */}
+      <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-4 sm:p-5 shadow-soft space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <Link
+            to="/dashboard"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-clinical-textSecondary hover:text-clinical-primary dark:hover:text-white transition min-h-[44px]"
+          >
+            <MaterialIcon name="arrow_back" className="text-[18px] text-clinical-primary" />
+            <span>Return to Dashboard</span>
+          </Link>
 
-      {/* Top Header Breadcrumb Controls */}
-      <div className="flex flex-wrap justify-between items-center gap-4 border-b border-clinical-border dark:border-slate-700 pb-4">
-        <Link to="/dashboard" className="text-xs font-semibold text-clinical-textSecondary hover:text-clinical-ink dark:hover:text-white flex items-center gap-1.5 transition">
-          <MaterialIcon name="arrow_back" className="text-[18px] text-clinical-primary" /> Return Dashboard
-        </Link>
-        <div className="flex gap-2">
-          <button onClick={handleAssistant} className="px-3.5 py-2 bg-clinical-primary text-white hover:bg-blue-600 text-xs font-semibold rounded-clinical flex items-center gap-1.5 transition shadow-soft">
-            <MaterialIcon name="psychology" className="text-[18px]" /> Ask AI Assistant
-          </button>
-          <button onClick={handleDownloadPdf} disabled={isReportDownloading} className="px-3.5 py-2 border border-clinical-border dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 text-xs font-semibold rounded-clinical flex items-center gap-1.5 text-clinical-textSecondary dark:text-slate-350 transition shadow-soft disabled:opacity-50">
-            <MaterialIcon name="download" className="text-[18px]" /> Download PDF
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={handleAssistant}
+              className="flex-1 sm:flex-none min-h-[44px] px-3.5 py-2 bg-clinical-primary text-white hover:bg-[#005c54] text-xs font-bold rounded-clinical flex items-center justify-center gap-1.5 transition shadow-soft"
+            >
+              <MaterialIcon name="psychology" className="text-[18px]" />
+              <span>Ask AI Assistant</span>
+            </button>
+            <button
+              onClick={handleDownloadPdf}
+              disabled={isReportDownloading}
+              className="flex-1 sm:flex-none min-h-[44px] px-3.5 py-2 border border-clinical-border dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-xs font-bold rounded-clinical flex items-center justify-center gap-1.5 text-clinical-ink dark:text-white transition shadow-soft disabled:opacity-50"
+            >
+              <MaterialIcon name="download" className="text-[18px] text-clinical-primary" />
+              <span>{isReportDownloading ? 'Preparing PDF...' : 'Download PDF Report'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Scan Header Metadata Strip */}
+        <div className="pt-3 border-t border-clinical-border dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-clinical-textSecondary">
+            <span>
+              Scan ID: <span className="font-mono font-bold text-clinical-ink dark:text-white">{prediction.scanId ? prediction.scanId.slice(0, 12) : 'NSA-SCAN'}</span>
+            </span>
+            <span>
+              Date: <span className="font-semibold text-clinical-ink dark:text-white">{scanDate}</span>
+            </span>
+            <span>
+              Status: <span className="font-bold text-emerald-600 dark:text-emerald-400">Analysis Completed</span>
+            </span>
+            <span>
+              Report: <span className="font-semibold text-clinical-primary">{prediction.reportId || 'Ready'}</span>
+            </span>
+          </div>
+
+          <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+            Preliminary Screening • Pending Review
+          </span>
         </div>
       </div>
 
-      {/* Main Two-Column split */}
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      {/* SECTION B: PREDICTION SUMMARY & CLINICAL DISCLAIMER */}
+      <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 sm:p-6 shadow-soft space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-clinical-border dark:border-slate-800 pb-3">
+          <div>
+            <span className="text-[10px] uppercase font-bold tracking-wider text-clinical-primary block">
+              Automated Dementia Screening Prediction
+            </span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-xl sm:text-2xl font-extrabold text-clinical-ink dark:text-white">
+                {prediction.label}
+              </span>
+              <span className={`text-[11px] font-bold px-2 py-0.5 rounded border ${activeStyle.badge}`}>
+                {prediction.confidence.toFixed(1)}% Confidence
+              </span>
+            </div>
+          </div>
 
-        {/* Left Side: PACS Image Viewer */}
-        <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4 flex flex-col justify-between">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-clinical-border dark:border-slate-700 pb-3">
+          <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-850 p-2.5 rounded-clinical border border-clinical-border dark:border-slate-750">
             <div>
-              <h3 className="text-base font-semibold text-clinical-ink dark:text-white">PACS Viewer Workstation</h3>
-              <p className="text-xs text-clinical-textSecondary mt-0.5">Brain scan voxel matrix diagnostics & explainability overlays</p>
+              <span className="text-[9px] uppercase font-bold text-clinical-textSecondary block">Risk Index</span>
+              <span className="text-sm font-extrabold text-clinical-ink dark:text-white">{Math.round(prediction.riskScore)}/100</span>
+            </div>
+            <div className="h-6 w-px bg-slate-200 dark:bg-slate-700" />
+            <div>
+              <span className="text-[9px] uppercase font-bold text-clinical-textSecondary block">Risk Category</span>
+              <span className={`text-xs uppercase font-extrabold ${getStatusTextStyle(prediction.riskLevel)}`}>{prediction.riskLevel}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* User-Friendly Plain Language Explanation (Part 3.E) */}
+        <div className="p-3.5 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-800 text-xs text-clinical-ink dark:text-slate-200 leading-relaxed">
+          <p>{plainLanguageExplanation}</p>
+        </div>
+
+        {/* Class Probability Distribution (Chart + Responsive Progress Bars) */}
+        <div className="space-y-3 pt-1">
+          <span className="text-[10px] uppercase font-bold tracking-wider text-clinical-textSecondary block">
+            Four-Class Probability Distribution
+          </span>
+
+          {/* Progress Bars for all screen sizes (optimized for mobile 320px-430px) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {probabilityData.map((item) => (
+              <div
+                key={item.className}
+                className="p-2.5 bg-slate-50 dark:bg-slate-850 rounded border border-clinical-border dark:border-slate-800 space-y-1.5"
+              >
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-bold text-clinical-ink dark:text-white">{item.displayName}</span>
+                  <span className="font-mono font-bold" style={{ color: item.color }}>
+                    {item.probability.toFixed(1)}%
+                  </span>
+                </div>
+                <div className="h-1.5 w-full bg-slate-200 dark:bg-slate-700 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.max(item.probability, 2)}%`,
+                      backgroundColor: item.color,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION C & D: PACS VIEWER & ANALYSIS DETAILS (Responsive Grid) */}
+      <div className="grid gap-6 grid-cols-1 lg:grid-cols-[1.15fr_0.85fr]">
+        {/* Left Column: PACS Viewer Workstation */}
+        <div
+          ref={viewerContainerRef}
+          className={`bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-4 sm:p-5 shadow-soft space-y-4 flex flex-col justify-between ${
+            isFullscreen ? 'fixed inset-0 z-50 p-6 rounded-none bg-black overflow-y-auto' : ''
+          }`}
+        >
+          {/* Workstation Header & Mode Segmented Control */}
+          <div className="space-y-3 border-b border-clinical-border dark:border-slate-800 pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm sm:text-base font-bold text-clinical-ink dark:text-white">
+                  PACS Viewer Workstation
+                </h3>
+                <p className="text-[11px] text-clinical-textSecondary">
+                  Axial T1-weighted slice inspection and Grad-CAM attention map
+                </p>
+              </div>
+
+              <button
+                onClick={toggleFullscreen}
+                className="p-2 text-clinical-textSecondary hover:text-clinical-ink dark:hover:text-white rounded border border-clinical-border dark:border-slate-700 bg-slate-50 dark:bg-slate-800 transition"
+                title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen Viewer'}
+              >
+                <MaterialIcon name={isFullscreen ? 'fullscreen_exit' : 'fullscreen'} className="text-[18px]" />
+              </button>
             </div>
 
-            {/* Viewport Toolbar controls */}
-            <div className="flex gap-2 border border-clinical-border dark:border-slate-700 p-0.5 rounded-clinical bg-slate-50 dark:bg-slate-850">
+            {/* Mobile-Friendly Mode Selector (Scrollable on small screens) */}
+            <div className="flex overflow-x-auto gap-1 border border-clinical-border dark:border-slate-800 p-1 rounded-clinical bg-slate-50 dark:bg-slate-900 scrollbar-none">
               {[
                 { id: 'original', label: 'Original' },
-                { id: 'heatmap', label: 'Heatmap' },
-                { id: 'compare', label: 'Split View' },
-                { id: 'sideBySide', label: 'Side-by-Side' }
+                { id: 'heatmap', label: 'Grad-CAM Overlay' },
+                { id: 'heatmapOnly', label: 'Heatmap Only' },
+                { id: 'compare', label: 'Split Slider' },
+                { id: 'sideBySide', label: 'Side-by-Side' },
               ].map((tab) => (
                 <button
                   key={tab.id}
                   onClick={() => setActiveViewTab(tab.id as any)}
-                  className={`px-2.5 py-1 rounded-md text-[10px] font-semibold transition-all ${
+                  className={`min-h-[38px] px-3 py-1 rounded text-[11px] font-bold whitespace-nowrap transition-all ${
                     activeViewTab === tab.id
                       ? 'bg-clinical-primary text-white shadow-soft'
-                      : 'text-clinical-textSecondary hover:text-clinical-ink hover:bg-white dark:hover:bg-slate-700'
+                      : 'text-clinical-textSecondary hover:text-clinical-ink hover:bg-white dark:hover:bg-slate-800'
                   }`}
                 >
                   {tab.label}
@@ -473,8 +603,8 @@ export default function ResultsPage() {
             </div>
           </div>
 
-          {/* Dark image viewer canvas */}
-          <div className="relative h-[400px] rounded-clinical overflow-hidden bg-[#0A0E17] border border-clinical-border dark:border-slate-800 flex items-center justify-center">
+          {/* Interactive Image Viewer Canvas */}
+          <div className="relative h-[340px] sm:h-[420px] rounded-clinical overflow-hidden bg-[#0A0E17] border border-clinical-border dark:border-slate-800 flex items-center justify-center">
             {originalImage ? (
               <div
                 className="w-full h-full relative flex items-center justify-center cursor-move select-none"
@@ -485,53 +615,106 @@ export default function ResultsPage() {
               >
                 {/* HUD Overlays */}
                 {showHud && (
-                  <div className="absolute inset-0 pointer-events-none p-3.5 flex flex-col justify-between text-[9px] font-mono text-emerald-400 z-20 select-none">
+                  <div className="absolute inset-0 pointer-events-none p-3 flex flex-col justify-between text-[9px] font-mono text-emerald-400 z-20 select-none">
                     <div className="flex justify-between">
-                      <div className="bg-black/60 px-2 py-1 rounded backdrop-blur-[2px] border border-white/5 leading-relaxed">
-                        PAT: {prediction.patientName || 'ANONYMOUS'}<br />
-                        ID: {prediction.patientId || 'NSA-1024'}<br />
-                        AGE: {prediction.age || 'N/A'} | {prediction.gender || 'N/A'}
+                      <div className="bg-black/70 px-2 py-1 rounded backdrop-blur-[2px] border border-white/10 leading-relaxed">
+                        PATIENT: {prediction.patientName || 'ANONYMOUS'}<br />
+                        ID: {prediction.patientId || 'NSA-PATIENT'}<br />
+                        SCAN: {scanDate}
                       </div>
-                      <div className="bg-black/60 px-2 py-1 rounded backdrop-blur-[2px] border border-white/5 text-right leading-relaxed">
-                        SCAN ID: {prediction.scanId || 'scan-pending'}<br />
-                        DIM: 256 x 256 x 176 voxels<br />
-                        SEQ: ResNet-50 v2.3
+                      <div className="bg-black/70 px-2 py-1 rounded backdrop-blur-[2px] border border-white/10 text-right leading-relaxed">
+                        MODEL: EfficientNet-B0<br />
+                        RESOLUTION: 224 x 224 px<br />
+                        LAYER: top_conv
                       </div>
                     </div>
 
-                    {/* Middle Row (Orientation Labels) */}
-                    <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex justify-between px-3 text-xs font-bold text-slate-400/60">
-                      <span>L</span>
-                      <span>R</span>
-                    </div>
-                    <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 flex flex-col justify-between py-3 text-xs font-bold text-slate-400/60">
-                      <span>A</span>
-                      <span>P</span>
-                    </div>
-
-                    <div className="flex justify-between mt-auto z-20">
-                      <div className="bg-black/60 px-2 py-1 rounded backdrop-blur-[2px] border border-white/5 leading-relaxed">
+                    <div className="flex justify-between mt-auto">
+                      <div className="bg-black/70 px-2 py-1 rounded backdrop-blur-[2px] border border-white/10 leading-relaxed">
                         ZOOM: {Math.round(zoom * 100)}%<br />
                         BRT: {brightness}% | CON: {contrast}%
                       </div>
-                      <div className="bg-black/60 px-2 py-1 rounded backdrop-blur-[2px] border border-white/5 text-right leading-relaxed">
-                        LUT: {selectedLut.toUpperCase()}<br />
-                        INVERTED: {isInverted ? 'YES' : 'NO'}
+                      <div className="bg-black/70 px-2 py-1 rounded backdrop-blur-[2px] border border-white/10 text-right leading-relaxed">
+                        VIEW: {activeViewTab.toUpperCase()}<br />
+                        OPACITY: {heatmapOpacity}%
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Compare Split View */}
+                {/* 1. Original MRI View */}
+                {activeViewTab === 'original' && (
+                  <img
+                    src={originalImage}
+                    alt="Original Brain MRI"
+                    className="max-h-full max-w-full object-contain"
+                    style={{
+                      filter: getFilterStyle(false),
+                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                    }}
+                    draggable={false}
+                  />
+                )}
+
+                {/* 2. Grad-CAM Overlay View */}
+                {activeViewTab === 'heatmap' && (
+                  <div className="w-full h-full relative flex items-center justify-center">
+                    <img
+                      src={originalImage}
+                      alt="Brain MRI Base"
+                      className="max-h-full max-w-full object-contain"
+                      style={{
+                        filter: getFilterStyle(false),
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                      }}
+                      draggable={false}
+                    />
+                    {heatmapUrl && (
+                      <img
+                        src={heatmapUrl}
+                        alt="Grad-CAM Heatmap Overlay"
+                        className="absolute max-h-full max-w-full object-contain pointer-events-none"
+                        style={{
+                          opacity: heatmapOpacity / 100,
+                          filter: getFilterStyle(true),
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        }}
+                        draggable={false}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Heatmap-Only View (Part 3.C requirement) */}
+                {activeViewTab === 'heatmapOnly' && (
+                  <div className="w-full h-full relative flex items-center justify-center bg-black">
+                    {heatmapUrl ? (
+                      <img
+                        src={heatmapUrl}
+                        alt="Grad-CAM Heatmap Isolated"
+                        className="max-h-full max-w-full object-contain"
+                        style={{
+                          filter: getFilterStyle(true),
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        }}
+                        draggable={false}
+                      />
+                    ) : (
+                      <p className="text-xs text-slate-400">Heatmap visualization is generating or unavailable for this scan.</p>
+                    )}
+                  </div>
+                )}
+
+                {/* 4. Split Slider View */}
                 {activeViewTab === 'compare' && (
                   <div className="w-full h-full relative flex items-center justify-center">
                     <img
                       src={originalImage}
-                      alt="Greyscale MRI Base"
-                      className="max-h-full object-contain"
+                      alt="Base MRI"
+                      className="max-h-full max-w-full object-contain"
                       style={{
                         filter: getFilterStyle(false),
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                       }}
                       draggable={false}
                     />
@@ -539,16 +722,15 @@ export default function ResultsPage() {
                       <img
                         src={heatmapUrl}
                         alt="Heatmap Overlay"
-                        className="absolute max-h-full object-contain pointer-events-none"
+                        className="absolute max-h-full max-w-full object-contain pointer-events-none"
                         style={{
                           filter: getFilterStyle(true),
                           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                          clipPath: `inset(0 ${100 - comparisonPosition}% 0 0)`
+                          clipPath: `inset(0 ${100 - comparisonPosition}% 0 0)`,
                         }}
                         draggable={false}
                       />
                     )}
-                    {/* Slider divider line */}
                     <div
                       className="absolute inset-y-0 w-0.5 bg-clinical-primary pointer-events-none z-10"
                       style={{ left: `${comparisonPosition}%` }}
@@ -556,76 +738,31 @@ export default function ResultsPage() {
                   </div>
                 )}
 
-                {/* Original greyscale */}
-                {activeViewTab === 'original' && (
-                  <img
-                    src={originalImage}
-                    alt="Original Greyscale scan"
-                    className="max-h-full object-contain"
-                    style={{
-                      filter: getFilterStyle(false),
-                      transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-                    }}
-                    draggable={false}
-                  />
-                )}
-
-                {/* Heatmap overlay */}
-                {activeViewTab === 'heatmap' && (
-                  <div className="w-full h-full relative flex items-center justify-center">
-                    <img
-                      src={originalImage}
-                      alt="Greyscale MRI Base"
-                      className="max-h-full object-contain"
-                      style={{
-                        filter: getFilterStyle(false),
-                        transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-                      }}
-                      draggable={false}
-                    />
-                    {heatmapUrl && (
-                      <img
-                        src={heatmapUrl}
-                        alt="Heatmap Overlay"
-                        className="absolute max-h-full object-contain pointer-events-none"
-                        style={{
-                          opacity: heatmapOpacity / 100,
-                          filter: getFilterStyle(true),
-                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
-                        }}
-                        draggable={false}
-                      />
-                    )}
-                  </div>
-                )}
-
-                {/* Side-by-Side View */}
+                {/* 5. Side-by-Side View */}
                 {activeViewTab === 'sideBySide' && (
-                  <div className="w-full h-full grid grid-cols-2 gap-2 p-2">
-                    {/* Left Pane: Original */}
-                    <div className="relative h-full w-full border-r border-slate-800 overflow-hidden flex items-center justify-center bg-slate-950">
+                  <div className="w-full h-full grid grid-cols-1 sm:grid-cols-2 gap-2 p-2">
+                    <div className="relative h-full w-full border border-slate-800 overflow-hidden flex items-center justify-center bg-slate-950 rounded">
                       <img
                         src={originalImage}
-                        alt="Greyscale MRI"
+                        alt="Original MRI"
                         className="max-h-full object-contain"
                         style={{
                           filter: getFilterStyle(false),
-                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                         }}
                         draggable={false}
                       />
-                      <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/75 text-[8px] font-bold tracking-wider text-slate-400">ORIGINAL</span>
+                      <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/75 text-[8px] font-bold text-slate-400">ORIGINAL</span>
                     </div>
 
-                    {/* Right Pane: Heatmap */}
-                    <div className="relative h-full w-full overflow-hidden flex items-center justify-center bg-slate-950">
+                    <div className="relative h-full w-full border border-slate-800 overflow-hidden flex items-center justify-center bg-slate-950 rounded">
                       <img
                         src={originalImage}
-                        alt="Greyscale MRI Base"
+                        alt="Original Base"
                         className="max-h-full object-contain"
                         style={{
                           filter: getFilterStyle(false),
-                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+                          transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                         }}
                         draggable={false}
                       />
@@ -637,12 +774,12 @@ export default function ResultsPage() {
                           style={{
                             opacity: heatmapOpacity / 100,
                             filter: getFilterStyle(true),
-                            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`
+                            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                           }}
                           draggable={false}
                         />
                       )}
-                      <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/75 text-[8px] font-bold tracking-wider text-slate-400">HEATMAP OVERLAY</span>
+                      <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded bg-black/75 text-[8px] font-bold text-slate-400">OVERLAY</span>
                     </div>
                   </div>
                 )}
@@ -652,250 +789,205 @@ export default function ResultsPage() {
             )}
           </div>
 
-          {/* Opacity slider */}
-          {activeViewTab === 'heatmap' && (
-            <div className="space-y-1.5 bg-slate-50 dark:bg-slate-850 p-3 rounded-clinical border border-clinical-border dark:border-slate-700 text-xs font-bold text-clinical-textSecondary">
-              <span className="block text-[10px] uppercase">Grad-CAM Opacity ({heatmapOpacity}%)</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={heatmapOpacity}
-                onChange={(e) => setHeatmapOpacity(Number(e.target.value))}
-                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
-              />
-            </div>
-          )}
-
-          {/* Split slider control */}
-          {activeViewTab === 'compare' && (
-            <div className="space-y-1.5 bg-slate-50 dark:bg-slate-850 p-3 rounded-clinical border border-clinical-border dark:border-slate-700 text-xs font-bold text-clinical-textSecondary">
-              <span className="block text-[10px] uppercase">Split Position ({comparisonPosition}%)</span>
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={comparisonPosition}
-                onChange={(e) => setComparisonPosition(Number(e.target.value))}
-                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
-              />
-            </div>
-          )}
-
-          {/* Viewport Brightness & Contrast Controls */}
-          <div className="grid grid-cols-2 gap-4 bg-slate-50 dark:bg-slate-850 p-3 rounded-clinical border border-clinical-border dark:border-slate-700 text-xs font-bold text-clinical-textSecondary">
-            <div className="space-y-1.5">
-              <span className="block text-[10px] uppercase">Brightness ({brightness}%)</span>
-              <input
-                type="range"
-                min="50"
-                max="150"
-                value={brightness}
-                onChange={(e) => setBrightness(Number(e.target.value))}
-                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <span className="block text-[10px] uppercase">Contrast ({contrast}%)</span>
-              <input
-                type="range"
-                min="50"
-                max="150"
-                value={contrast}
-                onChange={(e) => setContrast(Number(e.target.value))}
-                className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
-              />
-            </div>
-          </div>
-
-          {/* Zoom controls */}
-          <div className="flex items-center justify-between py-1.5 px-3 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-700 text-[10px] font-bold text-clinical-textSecondary">
-            <span>ZOOM SCALE: {Math.round(zoom * 100)}%</span>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setZoom((z) => Math.min(3, z + 0.25))} className="px-2 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-750 font-bold" title="Zoom In">＋</button>
-              <button onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))} className="px-2 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-750 font-bold" title="Zoom Out">－</button>
-              <button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }} className="px-2 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-750 uppercase tracking-wider text-[9px]" title="Reset Viewport">Reset</button>
-            </div>
-          </div>
-
-          {/* Custom LUT Color Mappings & Diagnostic Controls */}
-          <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-850 p-3 rounded-clinical border border-clinical-border dark:border-slate-700 text-xs font-bold text-clinical-textSecondary">
-            <div className="space-y-1">
-              <span className="block text-[9px] uppercase tracking-wider">Heatmap LUT Color Profile</span>
-              <select
-                value={selectedLut}
-                onChange={(e) => setSelectedLut(e.target.value as any)}
-                className="w-full text-[10px] py-1 px-1.5 rounded bg-white dark:bg-slate-800 border border-clinical-border dark:border-slate-700 text-clinical-textPrimary dark:text-white outline-none cursor-pointer"
-              >
-                <option value="none">Default (Grad-CAM Jet)</option>
-                <option value="hot">Thermal (Hot)</option>
-                <option value="cool">Neurological (Cool)</option>
-                <option value="sepia">Clinical Amber (Sepia)</option>
-                <option value="emerald">Voxel Green (Emerald)</option>
-              </select>
-            </div>
-
-            <div className="flex flex-col justify-around">
-              <label className="flex items-center gap-1.5 cursor-pointer text-[10px] select-none">
+          {/* Viewer Controls Strip */}
+          <div className="space-y-3 pt-2">
+            {/* Opacity Slider for Heatmap */}
+            {(activeViewTab === 'heatmap' || activeViewTab === 'sideBySide') && (
+              <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-800 space-y-1">
+                <div className="flex justify-between text-xs font-bold text-clinical-textSecondary">
+                  <span>Grad-CAM Opacity</span>
+                  <span className="font-mono text-clinical-primary">{heatmapOpacity}%</span>
+                </div>
                 <input
-                  type="checkbox"
-                  checked={isInverted}
-                  onChange={(e) => setIsInverted(e.target.checked)}
-                  className="rounded border-slate-300 text-clinical-primary focus:ring-clinical-primary h-3 w-3"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={heatmapOpacity}
+                  onChange={(e) => setHeatmapOpacity(Number(e.target.value))}
+                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
                 />
-                <span>Invert Greyscale</span>
-              </label>
-              <label className="flex items-center gap-1.5 cursor-pointer text-[10px] select-none">
+              </div>
+            )}
+
+            {/* Split Position Slider */}
+            {activeViewTab === 'compare' && (
+              <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-800 space-y-1">
+                <div className="flex justify-between text-xs font-bold text-clinical-textSecondary">
+                  <span>Split Comparison Position</span>
+                  <span className="font-mono text-clinical-primary">{comparisonPosition}%</span>
+                </div>
                 <input
-                  type="checkbox"
-                  checked={showHud}
-                  onChange={(e) => setShowHud(e.target.checked)}
-                  className="rounded border-slate-300 text-clinical-primary focus:ring-clinical-primary h-3 w-3"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={comparisonPosition}
+                  onChange={(e) => setComparisonPosition(Number(e.target.value))}
+                  className="w-full h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
                 />
-                <span>HUD Overlays</span>
-              </label>
+              </div>
+            )}
+
+            {/* Brightness, Contrast & Zoom */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+              <div className="p-2.5 bg-slate-50 dark:bg-slate-850 rounded border border-clinical-border dark:border-slate-800 space-y-1">
+                <span className="text-[10px] font-bold text-clinical-textSecondary block">Brightness ({brightness}%)</span>
+                <input
+                  type="range"
+                  min="50"
+                  max="150"
+                  value={brightness}
+                  onChange={(e) => setBrightness(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
+                />
+              </div>
+
+              <div className="p-2.5 bg-slate-50 dark:bg-slate-850 rounded border border-clinical-border dark:border-slate-800 space-y-1">
+                <span className="text-[10px] font-bold text-clinical-textSecondary block">Contrast ({contrast}%)</span>
+                <input
+                  type="range"
+                  min="50"
+                  max="150"
+                  value={contrast}
+                  onChange={(e) => setContrast(Number(e.target.value))}
+                  className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-clinical-primary"
+                />
+              </div>
+
+              <div className="p-2.5 bg-slate-50 dark:bg-slate-850 rounded border border-clinical-border dark:border-slate-800 flex items-center justify-between">
+                <span className="text-[10px] font-bold text-clinical-textSecondary">Zoom: {Math.round(zoom * 100)}%</span>
+                <div className="flex gap-1">
+                  <button
+                    onClick={() => setZoom((z) => Math.min(3, z + 0.25))}
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-750 border border-clinical-border dark:border-slate-700 font-bold"
+                  >
+                    +
+                  </button>
+                  <button
+                    onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-750 border border-clinical-border dark:border-slate-700 font-bold"
+                  >
+                    -
+                  </button>
+                  <button
+                    onClick={() => {
+                      setZoom(1);
+                      setPan({ x: 0, y: 0 });
+                      setBrightness(100);
+                      setContrast(100);
+                    }}
+                    className="px-2 py-1 rounded bg-white dark:bg-slate-750 border border-clinical-border dark:border-slate-700 text-[10px] font-bold uppercase"
+                  >
+                    Reset
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Heatmap Color Legend (Part 4 requirement) */}
+            <div className="p-3 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-800 space-y-1.5">
+              <div className="flex justify-between items-center text-[10px] font-bold text-clinical-textSecondary">
+                <span>AI Attention Activation (Grad-CAM Jet Legend)</span>
+                <span className="font-mono text-clinical-primary">Min → Max Attention</span>
+              </div>
+              <div className="h-2.5 w-full rounded-full bg-gradient-to-r from-blue-600 via-cyan-400 via-yellow-400 to-red-600 shadow-inner" />
+              <div className="flex justify-between text-[9px] text-clinical-textSecondary font-semibold">
+                <span>Low Attention (Blue)</span>
+                <span>Moderate (Cyan/Yellow)</span>
+                <span>Peak Attention (Red)</span>
+              </div>
+              <p className="text-[10px] text-clinical-textSecondary pt-1 leading-relaxed">
+                <span className="font-bold text-clinical-ink dark:text-white">Clinical Note:</span> Grad-CAM visualizes image regions that contributed most to the model's classification decision. It does <b>not</b> identify lesions, tumors, or confirmed tissue pathology.
+              </p>
             </div>
           </div>
         </div>
 
-        {/* Right Side: Professional Clinical Report Sheet */}
-        <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-6 shadow-soft space-y-6 overflow-y-auto max-h-[700px] scrollbar-thin">
+        {/* Right Column: Analysis Details, Scope & Doctor Notes */}
+        <div className="space-y-5">
+          {/* Analysis Specifications Card (Part 3.D) */}
+          <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-clinical-primary border-b border-clinical-border dark:border-slate-800 pb-2">
+              Analysis Specifications & Pipeline Details
+            </h3>
 
-          {/* Section 1: Patient Information Card */}
-          <div className="space-y-2.5">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">I. EMR Patient Identification</h4>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">{t('dashboard_patient_name', 'Patient Name')}</span>
-                <span className="font-bold text-clinical-ink dark:text-white mt-0.5 block">{prediction.patientName ?? user?.name ?? 'N/A'}</span>
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-clinical-textSecondary font-medium">Model Architecture:</span>
+                <span className="font-mono font-bold text-clinical-ink dark:text-white">EfficientNet-B0 CNN</span>
               </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">Patient ID</span>
-                <span className="font-semibold text-clinical-ink dark:text-white mt-0.5 block">{prediction.patientId ?? user?.id ?? 'NSA-1024'}</span>
+              <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-clinical-textSecondary font-medium">Model Weights File:</span>
+                <span className="font-mono text-clinical-ink dark:text-white">dementia_model.keras</span>
               </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">Date of Scan</span>
-                <span className="font-semibold text-clinical-ink dark:text-white mt-0.5 block">{scanDate}</span>
+              <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-clinical-textSecondary font-medium">Input Tensor Shape:</span>
+                <span className="font-mono text-clinical-ink dark:text-white">224 × 224 × 3 (RGB)</span>
               </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">MRI Dimensions</span>
-                <span className="font-semibold text-clinical-ink dark:text-white mt-0.5 block">256 x 256 x 176 voxels</span>
+              <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-clinical-textSecondary font-medium">Grad-CAM Target Layer:</span>
+                <span className="font-mono text-clinical-ink dark:text-white">top_conv</span>
               </div>
-            </div>
-          </div>
-
-          {/* Section 2: AI Diagnosis Parameters */}
-          <div className="space-y-2.5">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">II. AI Diagnosis Parameters</h4>
-            <div className="grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">Prediction Stage</span>
-                <span className={`inline-flex mt-1 text-[10px] font-bold uppercase px-2 py-0.5 rounded border ${activeStyle.badge}`}>{prediction.label}</span>
+              <div className="flex justify-between py-1 border-b border-slate-100 dark:border-slate-800">
+                <span className="text-clinical-textSecondary font-medium">Explainability Status:</span>
+                <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                  {heatmapUrl ? 'Heatmap Generated' : 'Heatmap Processing'}
+                </span>
               </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">{t('results_confidence', 'Confidence')}</span>
-                <span className="font-bold text-clinical-ink dark:text-white mt-1 block">{prediction.confidence.toFixed(1)}%</span>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">{t('dashboard_risk_score', 'Risk Score')}</span>
-                <span className="font-semibold text-clinical-ink dark:text-white mt-0.5 block">{Math.round(prediction.riskScore)}/100</span>
-              </div>
-              <div>
-                <span className="text-[10px] font-bold text-clinical-textSecondary uppercase block">Risk Category</span>
-                <span className={`block mt-0.5 font-bold uppercase ${getStatusTextStyle(prediction.riskLevel)}`}>{prediction.riskLevel}</span>
+              <div className="flex justify-between py-1">
+                <span className="text-clinical-textSecondary font-medium">Pre-Processing:</span>
+                <span className="font-semibold text-clinical-ink dark:text-white">Bilinear Resized & Normalized</span>
               </div>
             </div>
           </div>
 
-          {/* Section 3: AI Summary */}
-          <div className="space-y-2 bg-slate-50 dark:bg-slate-850 p-4 rounded-clinical border border-clinical-border dark:border-slate-700">
-            <span className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block">III. AI Summary Diagnostic Findings</span>
-            <p className="text-xs font-semibold text-clinical-ink dark:text-white leading-relaxed">
-              The MRI indicates <span className="text-clinical-primary font-bold">{prediction.label}</span> with <span className="font-bold">{prediction.confidence.toFixed(1)}%</span> model confidence. The computed risk category is rated as <span className={`font-bold ${getStatusTextStyle(prediction.riskLevel)}`}>{prediction.riskLevel}</span>. Early consultation and clinical follow-up checks are recommended.
-            </p>
-          </div>
-
-          {/* Section 3.5: Affected Brain Parameters */}
-          <div className="grid grid-cols-2 gap-3 text-xs animate-fadeIn">
-            <div className="p-3 rounded-clinical bg-slate-50 dark:bg-slate-850 border border-clinical-border dark:border-slate-700">
-              <span className="text-[9px] uppercase font-bold text-clinical-textSecondary block">Primary Affected Region</span>
-              <span className="font-extrabold text-clinical-ink dark:text-white mt-1 block">Bilateral Hippocampus & Temporal Lobe</span>
+          {/* Additional Capabilities & Scope (Part 5 requirement) */}
+          <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-3">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-clinical-primary uppercase tracking-wider">
+              <MaterialIcon name="checklist" className="text-[18px]" />
+              <span>Model Scope & Clinical Limitations</span>
             </div>
-            <div className="p-3 rounded-clinical bg-slate-50 dark:bg-slate-850 border border-clinical-border dark:border-slate-700">
-              <span className="text-[9px] uppercase font-bold text-clinical-textSecondary block">Clinical Follow-up Window</span>
-              <span className="font-extrabold text-clinical-primary mt-1 block">Biennial Review (12 Months)</span>
-            </div>
-          </div>
 
-          {/* Section 4: Clinical Explanation */}
-          <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">IV. Dementia Stage Interpretation</h4>
-            <div className="space-y-2">
-              {activeClass ? (
-                EDUCATION[activeClass].map((item: string, idx: number) => (
-                  <div key={idx} className="p-3 bg-slate-50 dark:bg-slate-850 rounded-clinical border border-clinical-border dark:border-slate-700 text-xs font-semibold text-clinical-textSecondary leading-relaxed flex gap-2">
-                    <span className="text-clinical-primary">●</span>
-                    <span>{item}</span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-clinical-textSecondary font-semibold">Educational metrics pending.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Section 5: Recommendations */}
-          <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">V. EMR Physician Guidance Recommendations</h4>
-            {Object.keys(recommendations).length > 0 ? (
-              <div className="grid gap-4 sm:grid-cols-2">
-                {RECOMMENDATION_CATEGORIES.filter((cat) => recommendations[cat]?.length > 0).map((category) => (
-                  <div key={category} className="p-3 rounded-clinical border border-clinical-border dark:border-slate-700 bg-slate-50 dark:bg-slate-850 space-y-1.5">
-                    <span className="text-[9px] text-clinical-primary font-bold uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">
-                      {category}
-                    </span>
-                    <ul className="space-y-1">
-                      {recommendations[category].map((item: string, idx: number) => (
-                        <li key={idx} className="flex gap-1.5 text-[11px] font-semibold text-clinical-textSecondary leading-normal">
-                          <span className="text-clinical-primary mt-0.5">•</span>
-                          <span>{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+            <div className="space-y-2 text-xs text-clinical-textSecondary leading-relaxed">
+              <div className="p-2.5 rounded bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/40 text-emerald-800 dark:text-emerald-300">
+                <span className="font-bold block text-[11px] mb-0.5">✓ Currently Supported:</span>
+                4-class dementia screening classification (<span className="font-semibold">NonDemented, VeryMildDemented, MildDemented, ModerateDemented</span>) from 2D axial MRI slices.
               </div>
-            ) : (
-              <p className="text-xs text-clinical-textSecondary font-semibold text-center py-2">No recommendations available</p>
-            )}
-          </div>
 
-          {/* Section 6: Warning Signs & Emergency Indicators */}
-          <div className="space-y-2 animate-fadeIn">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">VI. Warning Signs & Emergency Indicators</h4>
-            <div className="p-3 bg-red-50 dark:bg-red-950/20 rounded-clinical border border-red-200/40 text-xs font-semibold text-red-700 dark:text-red-400 leading-relaxed flex gap-2">
-              <span className="text-red-500 font-bold shrink-0">⚠️ Alerts:</span>
-              <span>Watch for sudden disorientation, severe recall lapses, or speech disfluency. Immediate physician consultation is advised if symptoms escalate.</span>
+              <div className="p-2.5 rounded bg-amber-50/70 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/40 text-amber-800 dark:text-amber-300">
+                <span className="font-bold block text-[11px] mb-0.5">⚠️ Separate Validated Models Required For:</span>
+                <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                  <li>Brain anatomical structure segmentation</li>
+                  <li>Hippocampal volumetry estimation</li>
+                  <li>White matter hyperintensity quantification</li>
+                  <li>Stroke, infarct, or hemorrhage detection</li>
+                  <li>Brain tumor or lesion detection</li>
+                </ul>
+              </div>
             </div>
           </div>
 
-          {/* Section 7: Physician Validation & Observation Notes */}
-          <div className="space-y-4 animate-fadeIn">
-            <h4 className="text-[10px] font-bold text-clinical-primary uppercase tracking-wider block border-b border-clinical-border dark:border-slate-700 pb-1">VII. Physician Validation & Observations</h4>
+          {/* Doctor Observations & Validation Notes (Part 6 & 7) */}
+          <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4">
+            <div className="flex items-center justify-between border-b border-clinical-border dark:border-slate-800 pb-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-clinical-primary">
+                Clinician Validation & Notes
+              </h4>
+              <span className="text-[10px] text-clinical-textSecondary font-semibold">
+                {doctorNotesList.length} note(s) logged
+              </span>
+            </div>
 
-            {/* Timeline Notes List */}
-            <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+            {/* Notes List */}
+            <div className="space-y-2.5 max-h-60 overflow-y-auto">
               {doctorNotesList.length > 0 ? (
                 doctorNotesList.map((note) => (
-                  <div key={note.id} className="p-3 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 space-y-2 text-xs">
+                  <div
+                    key={note.id}
+                    className="p-3 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 space-y-1 text-xs"
+                  >
                     <div className="flex justify-between items-start gap-2">
-                      <div>
-                        <span className="font-extrabold text-clinical-ink dark:text-white block">{note.title}</span>
-                        <span className="text-[10px] text-clinical-textSecondary font-semibold">
-                          By {note.doctor_name || 'Assigned Neurologist'} • {note.created_at ? new Date(note.created_at).toLocaleString() : 'Just now'}
-                        </span>
-                      </div>
-                      <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-bold uppercase border ${
+                      <span className="font-bold text-clinical-ink dark:text-white">{note.title}</span>
+                      <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 rounded border ${
                         note.severity === 'High'
                           ? 'bg-red-500/10 text-red-500 border-red-500/20'
                           : note.severity === 'Medium'
@@ -905,182 +997,142 @@ export default function ResultsPage() {
                         {note.severity}
                       </span>
                     </div>
-                    <p className="text-clinical-textSecondary leading-relaxed whitespace-pre-line font-semibold mt-1">
-                      {note.note}
+                    <p className="text-clinical-textSecondary leading-relaxed">{note.note}</p>
+                    <p className="text-[10px] text-clinical-textSecondary pt-1">
+                      By {note.doctor_name || 'Clinician'} • {note.created_at ? new Date(note.created_at).toLocaleDateString() : 'Recent'}
                     </p>
                   </div>
                 ))
               ) : (
-                <div className="py-6 text-center border border-dashed border-clinical-border dark:border-slate-700 rounded-clinical">
-                  <MaterialIcon name="notes" className="text-clinical-textSecondary text-[24px]" />
-                  <p className="text-xs font-semibold text-clinical-textSecondary mt-1">No clinical observation logs recorded</p>
+                <div className="p-4 text-center border border-dashed border-clinical-border dark:border-slate-750 rounded-clinical text-xs text-clinical-textSecondary">
+                  <MaterialIcon name="notes" className="text-[24px] mx-auto text-clinical-textSecondary" />
+                  <p className="mt-1">Pending Clinical Review</p>
+                  <p className="text-[10px] text-slate-400 mt-0.5">No physician notes recorded for this scan.</p>
                 </div>
               )}
             </div>
 
-            {/* Add Note Form (Only for Doctors and Admins) */}
+            {/* Add Note Form (for Doctors and Admins) */}
             {(user?.role === 'Doctor' || user?.role === 'Admin') && (
-              <form onSubmit={handleAddNote} className="space-y-3 pt-3 border-t border-clinical-border dark:border-slate-700">
-                <span className="text-[10px] font-bold text-clinical-primary uppercase tracking-wide block">Add New Observation Log</span>
-                <div className="grid gap-3 grid-cols-3">
-                  <div className="col-span-2">
-                    <input
-                      type="text"
-                      placeholder="Observation Title (e.g. Hippocampal Volumetry Check)"
-                      value={newNoteTitle}
-                      onChange={(e) => setNewNoteTitle(e.target.value)}
-                      className="w-full text-xs px-3 py-2 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white outline-none focus:border-clinical-primary font-semibold"
-                    />
-                  </div>
-                  <div>
-                    <select
-                      value={newNoteSeverity}
-                      onChange={(e) => setNewNoteSeverity(e.target.value as any)}
-                      className="w-full text-xs px-3 py-2 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white outline-none focus:border-clinical-primary font-semibold"
-                    >
-                      <option value="Low">Low Severity</option>
-                      <option value="Medium">Medium Severity</option>
-                      <option value="High">High Severity</option>
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <textarea
-                    placeholder="Enter observation notes, diagnostic feedback, and next steps..."
-                    value={newNoteContent}
-                    onChange={(e) => setNewNoteContent(e.target.value)}
-                    className="w-full text-xs p-3 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white outline-none focus:border-clinical-primary font-semibold leading-relaxed"
-                    rows={3}
-                  />
-                </div>
-                <div className="flex justify-end">
+              <form onSubmit={handleAddNote} className="space-y-3 pt-3 border-t border-clinical-border dark:border-slate-800">
+                <span className="text-[10px] font-bold text-clinical-primary uppercase block">
+                  Add Clinical Review Note
+                </span>
+                <input
+                  type="text"
+                  placeholder="Observation Title..."
+                  value={newNoteTitle}
+                  onChange={(e) => setNewNoteTitle(e.target.value)}
+                  className="w-full text-xs px-3 py-2 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white outline-none focus:border-clinical-primary font-medium"
+                />
+                <textarea
+                  placeholder="Enter clinical findings, patient correlation notes, or follow-up recommendation..."
+                  value={newNoteContent}
+                  onChange={(e) => setNewNoteContent(e.target.value)}
+                  rows={2}
+                  className="w-full text-xs p-3 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white outline-none focus:border-clinical-primary font-medium"
+                />
+                <div className="flex justify-between items-center">
+                  <select
+                    value={newNoteSeverity}
+                    onChange={(e) => setNewNoteSeverity(e.target.value as any)}
+                    className="text-xs px-2.5 py-1.5 border border-clinical-border dark:border-slate-700 rounded-clinical bg-slate-50 dark:bg-slate-850 text-clinical-ink dark:text-white"
+                  >
+                    <option value="Low">Low Severity</option>
+                    <option value="Medium">Medium Severity</option>
+                    <option value="High">High Severity</option>
+                  </select>
+
                   <button
                     type="submit"
-                    className="px-4 py-2 bg-clinical-primary hover:bg-[#005c54] text-white text-[10px] font-bold rounded-clinical transition shadow-sm"
+                    className="min-h-[40px] px-4 py-2 bg-clinical-primary hover:bg-[#005c54] text-white text-xs font-bold rounded-clinical transition"
                   >
-                    Add Observation
+                    Save Note
                   </button>
                 </div>
               </form>
             )}
           </div>
-
-          {/* Specifications */}
-          <div className="space-y-2.5 border-t border-clinical-border dark:border-slate-700 pt-4 text-[10px] font-semibold text-clinical-textSecondary">
-            <div className="flex justify-between py-1 border-b border-slate-50 dark:border-slate-800">
-              <span>Model Classifier:</span>
-              <span className="font-mono text-clinical-ink dark:text-white">ResNet-50 v2.3</span>
-            </div>
-            <div className="flex justify-between py-1 border-b border-slate-50 dark:border-slate-800">
-              <span>Model Accuracy Bounds:</span>
-              <span className="font-mono text-clinical-ink dark:text-white">98.2%</span>
-            </div>
-            <div className="flex justify-between py-1 border-b border-slate-50 dark:border-slate-800">
-              <span>Inference Computation latency:</span>
-              <span className="font-mono text-clinical-ink dark:text-white">1.84s</span>
-            </div>
-            <div className="flex justify-between py-1">
-              <span>Report UID:</span>
-              <span className="font-mono text-clinical-ink dark:text-white truncate max-w-[200px]">{prediction.reportId || 'N/A'}</span>
-            </div>
-          </div>
-
-          {/* Action buttons row */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
-            <button
-              onClick={() => {
-                workflow.resetWorkflow();
-                navigate('/analysis');
-              }}
-              className="px-4 py-2.5 bg-clinical-primary hover:bg-[#005c54] text-white text-xs font-bold rounded-clinical transition text-center shadow-soft"
-            >
-              {t('results_scan_again', 'Scan New Patient')}
-            </button>
-            <button
-              onClick={() => navigate('/dashboard')}
-              className="px-4 py-2.5 border border-clinical-border dark:border-slate-700 hover:bg-slate-50 text-clinical-textSecondary dark:text-slate-200 text-xs font-bold rounded-clinical transition text-center"
-            >
-              Back Dashboard
-            </button>
-          </div>
         </div>
-
       </div>
 
-      {/* Row 2: Secondary Analytics (Confidence Chart, History) */}
-      <div className="grid gap-6 lg:grid-cols-2">
-
-        {/* Recharts Probability BarChart */}
+      {/* SECTION E: CLINICAL GUIDANCE RECOMMENDATIONS (if supplied by analysis) */}
+      {Object.keys(recommendations).length > 0 && (
         <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4">
-          <div>
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-clinical-textSecondary">Class Confidence Ratio</h3>
-            <p className="text-xs text-clinical-textSecondary mt-0.5">Statistical vector weights from model prediction layers</p>
+          <div className="flex items-center gap-2 border-b border-clinical-border dark:border-slate-800 pb-2">
+            <MaterialIcon name="medical_services" className="text-clinical-primary text-[20px]" />
+            <h3 className="text-xs font-bold uppercase tracking-wider text-clinical-textSecondary">
+              Diagnostic Guidance & Clinical Recommendations
+            </h3>
           </div>
 
-          {probabilityData.length > 0 ? (
-            <div className="h-40">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={probabilityData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#F1F5F9" vertical={false} />
-                  <XAxis dataKey="displayName" stroke="#94A3B8" fontSize={9} tickLine={false} />
-                  <YAxis stroke="#94A3B8" fontSize={9} tickLine={false} unit="%" />
-                  <Tooltip formatter={(value: number) => [`${value.toFixed(1)}%`, 'Confidence']} />
-                  <Bar dataKey="probability" radius={[4, 4, 0, 0]}>
-                    {probabilityData.map((entry) => (
-                      <Cell key={entry.className} fill={entry.color} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <EmptyState
-              iconName="monitoring"
-              title="No Probabilities Calculated"
-              description="Volumetric probability coordinates are not available for this analysis."
-            />
-          )}
+          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+            {RECOMMENDATION_CATEGORIES.filter((cat) => recommendations[cat]?.length > 0).map((category) => (
+              <div
+                key={category}
+                className="p-3.5 rounded-clinical border border-clinical-border dark:border-slate-700 bg-slate-50 dark:bg-slate-850 space-y-2"
+              >
+                <span className="text-[10px] text-clinical-primary font-bold uppercase tracking-wider block border-b border-clinical-border dark:border-slate-800 pb-1">
+                  {category}
+                </span>
+                <ul className="space-y-1.5">
+                  {recommendations[category].map((item: string, idx: number) => (
+                    <li key={idx} className="flex gap-1.5 text-xs text-clinical-textSecondary leading-relaxed">
+                      <span className="text-clinical-primary">•</span>
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION F: SCAN HISTORY TIMELINE */}
+      <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4">
+        <div className="flex items-center gap-2 pb-2 border-b border-clinical-border dark:border-slate-800 text-clinical-primary">
+          <MaterialIcon name="history" className="text-[20px]" />
+          <h3 className="text-xs font-bold uppercase tracking-wider text-clinical-textSecondary">
+            {t('dashboard_scan_history', 'Recent Scan History')}
+          </h3>
         </div>
 
-        {/* Prior Scan History Timeline */}
-        <div className="bg-white dark:bg-[#1E293B] border border-clinical-border dark:border-slate-700 rounded-clinical p-5 shadow-soft space-y-4">
-          <div className="flex items-center gap-2 pb-2 border-b border-clinical-border dark:border-slate-700 text-clinical-primary">
-            <MaterialIcon name="history" className="text-[18px]" />
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-clinical-textSecondary">{t('dashboard_scan_history', 'Scan History')}</h3>
+        {isTimelineLoading ? (
+          <div className="space-y-2">
+            {[1, 2].map((i) => (
+              <div key={i} className="h-12 bg-slate-100 dark:bg-slate-800 animate-pulse rounded-clinical" />
+            ))}
           </div>
-
-          {isTimelineLoading ? (
-            <div className="space-y-2">
-              {[1, 2].map((i) => (
-                <div key={i} className="h-12 bg-slate-200 dark:bg-slate-800 animate-pulse rounded-clinical" />
-              ))}
-            </div>
-          ) : history.length > 0 ? (
-            <div className="space-y-3">
-              {history.map((item) => (
-                <div key={item.id} className="p-3.5 border border-clinical-border dark:border-slate-700 bg-slate-50 dark:bg-slate-850 rounded-clinical flex justify-between items-center gap-4 text-xs font-semibold text-clinical-textSecondary">
-                  <div>
-                    <p className="font-semibold text-clinical-ink dark:text-white">{new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</p>
-                    <p className="text-[10px] text-clinical-textSecondary font-semibold uppercase mt-1">
-                      Prediction: {formatClassName(item.prediction)} | Confidence: {Math.round(item.confidence)}%
-                    </p>
-                  </div>
-                  <span className={`text-[10px] uppercase tracking-wider ${getStatusTextStyle(item.risk)}`}>
-                    {item.risk} Risk
-                  </span>
+        ) : history.length > 0 ? (
+          <div className="space-y-2.5">
+            {history.map((item) => (
+              <div
+                key={item.id}
+                className="p-3 border border-clinical-border dark:border-slate-700 bg-slate-50 dark:bg-slate-850 rounded-clinical flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs"
+              >
+                <div>
+                  <p className="font-bold text-clinical-ink dark:text-white">
+                    {new Date(item.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                  </p>
+                  <p className="text-[10px] text-clinical-textSecondary uppercase font-medium mt-0.5">
+                    Prediction: {formatClassName(item.prediction)} • Confidence: {Math.round(item.confidence)}%
+                  </p>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <EmptyState
-              iconName="history"
-              title="No Prior Scan History"
-              description="No clinical MRI scan sessions have been archived for this user."
-            />
-          )}
-        </div>
+                <span className={`text-[10px] uppercase font-bold ${getStatusTextStyle(item.risk)}`}>
+                  {item.risk} Risk Category
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState
+            iconName="history"
+            title="No Prior Scan History"
+            description="No clinical MRI scan sessions have been archived for this user."
+          />
+        )}
       </div>
-
     </motion.div>
   );
 }

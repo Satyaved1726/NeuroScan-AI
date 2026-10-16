@@ -38,10 +38,14 @@ def _analysis_result_from_report(report) -> AnalysisResult:
 
 
 def _build_user_pdf(user: UserOut, report) -> bytes:
-    patient_profile = store.get_patient_profile(user.id)
+    target_user_id = report.user_id if report.user_id else user.id
+    patient_user = store.get_user_by_id(target_user_id) if target_user_id != user.id else user
+    if not patient_user:
+        patient_user = user
+    patient_profile = store.get_patient_profile(target_user_id)
     profile_photo_bytes = fetch_report_image(patient_profile.get('photo_url') if patient_profile else None)
     return build_pdf_report(
-        user,
+        patient_user,
         _analysis_result_from_report(report),
         patient_profile=patient_profile,
         profile_photo_bytes=profile_photo_bytes,
@@ -110,7 +114,8 @@ def _get_supabase_client():
 
 def _get_pdf_bytes_cached(user: UserOut, report) -> bytes:
     bucket = 'reports'
-    storage_path = f'{user.id}/{report.report_id}.pdf'
+    storage_user_id = report.user_id or user.id
+    storage_path = f'{storage_user_id}/{report.report_id}.pdf'
     try:
         client = _get_supabase_client()
         pdf_bytes = client.storage.from_(bucket).download(storage_path)
@@ -147,15 +152,22 @@ def latest_report(user: UserOut = Depends(current_user_dependency)):
 
 @router.get('/{report_id}')
 def get_report(report_id: str, user: UserOut = Depends(current_user_dependency)):
-    report = store.get_report(report_id, user.id)
+    report = store.get_report(report_id, user.id, requesting_role=user.role.value)
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Report not found')
+
+    # Fetch patient name truthfully
+    patient_name = user.full_name
+    if report.user_id and report.user_id != user.id:
+        patient_user = store.get_user_by_id(report.user_id)
+        if patient_user:
+            patient_name = patient_user.full_name
 
     return ReportMeta(
         id=report.id,
         report_id=report.report_id,
         scan_id=report.scan_id,
-        patient_name=user.full_name,
+        patient_name=patient_name,
         prediction=report.prediction,
         confidence=report.confidence,
         risk_score=report.risk_score,
@@ -169,7 +181,7 @@ def get_report(report_id: str, user: UserOut = Depends(current_user_dependency))
 
 @router.get('/{report_id}/pdf')
 def download_report_pdf(report_id: str, user: UserOut = Depends(current_user_dependency)):
-    report = store.get_report(report_id, user.id)
+    report = store.get_report(report_id, user.id, requesting_role=user.role.value)
     if not report:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Report not found')
 

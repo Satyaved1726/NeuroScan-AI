@@ -268,7 +268,11 @@ def create_sqlite_tables(conn):
             validation TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'uploaded',
             created_at TEXT DEFAULT (now()),
-            image_url TEXT
+            image_url TEXT,
+            reviewed_by TEXT,
+            reviewed_at TEXT,
+            review_status TEXT DEFAULT 'awaiting_review',
+            review_notes TEXT
         );
     """)
     cursor.execute("""
@@ -317,7 +321,10 @@ def create_sqlite_tables(conn):
             storage_path TEXT,
             status TEXT NOT NULL DEFAULT 'generated',
             created_at TEXT DEFAULT (now()),
-            updated_at TEXT DEFAULT (now())
+            updated_at TEXT DEFAULT (now()),
+            review_status TEXT DEFAULT 'awaiting_review',
+            reviewed_at TEXT,
+            reviewed_by TEXT
         );
     """)
     cursor.execute("""
@@ -416,6 +423,17 @@ def create_sqlite_tables(conn):
             dosage TEXT NOT NULL,
             duration TEXT NOT NULL,
             instructions TEXT,
+            created_at TEXT DEFAULT (now()),
+            updated_at TEXT DEFAULT (now())
+        );
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS doctor_patient_assignments (
+            id TEXT PRIMARY KEY DEFAULT (gen_random_uuid()),
+            doctor_id TEXT NOT NULL,
+            patient_id TEXT NOT NULL,
+            assigned_by TEXT,
+            status TEXT DEFAULT 'Active',
             created_at TEXT DEFAULT (now()),
             updated_at TEXT DEFAULT (now())
         );
@@ -957,6 +975,26 @@ async def create_tables():
         """)
 
         cursor.execute("""
+            ALTER TABLE scans
+            ADD COLUMN IF NOT EXISTS reviewed_by UUID;
+        """)
+
+        cursor.execute("""
+            ALTER TABLE scans
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP WITH TIME ZONE;
+        """)
+
+        cursor.execute("""
+            ALTER TABLE scans
+            ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'awaiting_review';
+        """)
+
+        cursor.execute("""
+            ALTER TABLE scans
+            ADD COLUMN IF NOT EXISTS review_notes TEXT;
+        """)
+
+        cursor.execute("""
             UPDATE scans
             SET
                 original_filename = COALESCE(original_filename, NULLIF(regexp_replace(COALESCE(image_url, ''), '^.*/', ''), ''), id::text),
@@ -1197,6 +1235,21 @@ async def create_tables():
         cursor.execute("""
             ALTER TABLE reports
             ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP;
+        """)
+
+        cursor.execute("""
+            ALTER TABLE reports
+            ADD COLUMN IF NOT EXISTS review_status VARCHAR(50) DEFAULT 'awaiting_review';
+        """)
+
+        cursor.execute("""
+            ALTER TABLE reports
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP WITH TIME ZONE;
+        """)
+
+        cursor.execute("""
+            ALTER TABLE reports
+            ADD COLUMN IF NOT EXISTS reviewed_by UUID;
         """)
 
         cursor.execute("""
@@ -1482,6 +1535,22 @@ async def create_tables():
         """)
         add_foreign_key('prescriptions', 'patient_id', 'users', 'id', 'fk_prescriptions_patient_id')
         add_foreign_key('prescriptions', 'doctor_id', 'users', 'id', 'fk_prescriptions_doctor_id')
+
+        print("Creating doctor_patient_assignments table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS doctor_patient_assignments (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                doctor_id UUID NOT NULL,
+                patient_id UUID NOT NULL,
+                assigned_by UUID,
+                status VARCHAR(50) DEFAULT 'Active',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        add_foreign_key('doctor_patient_assignments', 'doctor_id', 'users', 'id', 'fk_dpa_doctor_id')
+        add_foreign_key('doctor_patient_assignments', 'patient_id', 'users', 'id', 'fk_dpa_patient_id')
+        add_foreign_key('doctor_patient_assignments', 'assigned_by', 'users', 'id', 'fk_dpa_assigned_by')
 
         conn.commit()
         logger.info("Database tables created successfully")

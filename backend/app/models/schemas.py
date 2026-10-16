@@ -352,3 +352,80 @@ class DoctorNoteSchema(BaseModel):
     note: str
     severity: str
     created_at: str | None = None
+
+
+class DoctorPatientAssignmentCreate(BaseModel):
+    doctor_id: str
+    patient_id: str
+
+
+class DoctorPatientAssignmentOut(BaseModel):
+    id: str
+    doctor_id: str
+    doctor_name: str | None = None
+    patient_id: str
+    patient_name: str | None = None
+    assigned_by: str | None = None
+    status: str = 'Active'
+    created_at: datetime
+
+
+class ClinicalReviewRequest(BaseModel):
+    review_status: str = Field(description="'reviewed' or 'requires_retest' or 'awaiting_review'")
+    notes: str | None = None
+
+
+class ClinicalReviewResponse(BaseModel):
+    scan_id: str
+    review_status: str
+    reviewed_by: str
+    reviewer_name: str
+    reviewed_at: datetime
+    notes: str | None = None
+
+
+class ClinicalQueueItem(BaseModel):
+    id: str
+    scan_id: str
+    patient_id: str
+    patient_name: str
+    patient_identifier: str
+    date: datetime
+    prediction: str | None = None
+    confidence: float | None = None
+    risk_category: str | None = None
+    report_id: str | None = None
+    report_status: str = 'generated'
+    review_status: str = 'awaiting_review'
+    assigned_doctor: str | None = None
+    reviewer_name: str | None = None
+    reviewed_at: datetime | None = None
+    review_notes: str | None = None
+    original_image_url: str | None = None
+    heatmap_url: str | None = None
+
+
+class PatientWorklistItem(BaseModel):
+    patient_id: str
+    user_id: str
+    full_name: str
+    age: int | None = None
+    gender: str | None = None
+    blood_group: str | None = None
+    total_scans: int = 0
+    latest_scan_date: datetime | None = None
+    latest_prediction: str | None = None
+    latest_risk: str | None = None
+    review_status: str = 'No Scans'
+    assignment_status: str = 'Active'
+
+
+class DoctorDashboardSummary(BaseModel):
+    assigned_patients: int
+    scans_awaiting_review: int
+    reports_ready: int
+    reviewed_scans: int
+    failed_scans: int
+    urgent_cases: int
+    review_queue: list[ClinicalQueueItem] = Field(default_factory=list)
+    recent_patients: list[PatientWorklistItem] = Field(default_factory=list)

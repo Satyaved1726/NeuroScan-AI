@@ -112,11 +112,20 @@ def latest(user: UserOut = Depends(current_user_dependency)):
     )
 
 
-@router.get('/result/{scanId}', response_model=AnalysisResult | None)
+@router.get('/result/{scanId}', response_model=AnalysisResult)
 def result(scanId: str, user: UserOut = Depends(current_user_dependency)):
-    record = store.get_analysis_by_scan_id(scanId, user.id)
+    if not store.can_user_access_scan(user.id, user.role.value, scanId):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this scan result",
+        )
+    record = store.get_analysis_by_scan_id(scanId, user.id, requesting_role=user.role.value)
     if not record:
-        return None
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan analysis record not found",
+        )
+
 
     return AnalysisResult(
         scan_id=record.scan_id,
@@ -134,8 +143,9 @@ def result(scanId: str, user: UserOut = Depends(current_user_dependency)):
         original_image_url=record.original_image_url,
         heatmap_url=record.heatmap_url,
         model_version='dementia_model.keras',
-        patient_profile=_patient_profile_summary(user.id),
+        patient_profile=_patient_profile_summary(record.user_id),
     )
+
 
 
 def _patient_profile_summary(user_id: str) -> dict[str, str | int | None] | None:

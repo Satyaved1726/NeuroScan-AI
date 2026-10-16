@@ -11,37 +11,48 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 import supabase
+import logging
 from datetime import datetime
 
 from ..core.config import get_settings
 from ..models.schemas import AnalysisResult, UserOut
 
+logger = logging.getLogger(__name__)
+
 REPORT_TITLE_STYLE = ParagraphStyle(
     'ReportTitle',
     fontName='Helvetica-Bold',
-    fontSize=24,
-    leading=28,
+    fontSize=22,
+    leading=26,
     textColor=colors.HexColor('#0F4C81'),
+)
+BANNER_STYLE = ParagraphStyle(
+    'Banner',
+    fontName='Helvetica-Bold',
+    fontSize=10,
+    leading=14,
+    textColor=colors.HexColor('#9A3412'),
+    alignment=1,
 )
 SECTION_HEADER_STYLE = ParagraphStyle(
     'SectionHeader',
     fontName='Helvetica-Bold',
-    fontSize=14,
-    leading=18,
+    fontSize=13,
+    leading=17,
     textColor=colors.HexColor('#0F172A'),
 )
 NORMAL_STYLE = ParagraphStyle(
     'Normal',
     fontName='Helvetica',
-    fontSize=10,
-    leading=14,
+    fontSize=9,
+    leading=13,
     textColor=colors.HexColor('#1F2937'),
 )
 SMALL_STYLE = ParagraphStyle(
     'Small',
     fontName='Helvetica',
     fontSize=8,
-    leading=10,
+    leading=11,
     textColor=colors.HexColor('#475569'),
 )
 
@@ -58,34 +69,55 @@ def build_pdf_report(
     document = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=24, leftMargin=24, topMargin=24, bottomMargin=24)
     story: list = []
 
+    # Preliminary Review Warning Banner
+    banner_data = [[Paragraph('<b>NOTICE: AI-generated preliminary report — pending clinical review.</b><br/>'
+                              'This document is an automated computer-assisted screening output. It does not constitute a definitive medical diagnosis.', BANNER_STYLE)]]
+    banner_table = Table(banner_data, colWidths=[170 * mm], hAlign='CENTER')
+    banner_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#FFEDD5')),
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#FB923C')),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+    ]))
+    story.append(banner_table)
+    story.append(Spacer(1, 10))
+
     # Header
     story.append(Paragraph('NeuroScan AI', REPORT_TITLE_STYLE))
-    story.append(Paragraph('AI-Powered Dementia Screening Report', NORMAL_STYLE))
-    story.append(Spacer(1, 12))
+    story.append(Paragraph('AI-Powered Brain MRI Dementia Screening Report', NORMAL_STYLE))
+    story.append(Spacer(1, 10))
 
     profile = patient_profile or {}
     patient_name = profile.get('full_name') or user.full_name
     patient_id = profile.get('patient_id') or user.id
+    report_creation_date = datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')
+    scan_date_str = result.timestamp.strftime('%Y-%m-%d %H:%M:%S') if result.timestamp else 'N/A'
+
     patient_rows = [
+        ['Report ID', result.report_id or 'Pending'],
+        ['Scan ID', result.scan_id or 'N/A'],
         ['Patient Name', patient_name],
         ['Patient ID', patient_id],
-        ['Email', profile.get('email') or user.email],
-        ['Role', user.role.value if hasattr(user.role, 'value') else str(user.role)],
-        ['Age', profile.get('age') or 'Not provided'],
-        ['Gender', profile.get('gender') or 'Not provided'],
-        ['Blood Group', profile.get('blood_group') or 'Not provided'],
-        ['Scan Date', result.timestamp.strftime('%Y-%m-%d %H:%M:%S')],
+        ['Account Email', profile.get('email') or user.email],
+        ['Age / Gender', f"{profile.get('age') or 'N/A'} / {profile.get('gender') or 'N/A'}"],
+        ['Blood Group', profile.get('blood_group') or 'Not recorded'],
+        ['Scan Acquisition Date', scan_date_str],
+        ['Report Creation Date', report_creation_date],
+        ['Clinical Review Status', 'Pending Clinical Review'],
     ]
 
-    # Patient Information
-    story.append(Paragraph('PATIENT INFORMATION', SECTION_HEADER_STYLE))
-    patient_info_table = Table(patient_rows, colWidths=[45 * mm, 78 * mm], hAlign='LEFT')
+    # Patient & Scan Information
+    story.append(Paragraph('SCAN & PATIENT IDENTIFICATION', SECTION_HEADER_STYLE))
+    patient_info_table = Table(patient_rows, colWidths=[55 * mm, 68 * mm], hAlign='LEFT')
     patient_info_table.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (0, -1), colors.HexColor('#E2E8F0')),
         ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#0F172A')),
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 4),
         ('INNERGRID', (0, 0), (-1, -1), 0.3, colors.HexColor('#CBD5E1')),
         ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#CBD5E1')),
     ]))
@@ -101,12 +133,12 @@ def build_pdf_report(
         ('ALIGN', (1, 0), (1, -1), 'CENTER'),
     ]))
     story.append(patient_table)
-    story.append(Spacer(1, 14))
+    story.append(Spacer(1, 12))
 
     # Imaging evidence
     story.append(Paragraph('IMAGING EVIDENCE', SECTION_HEADER_STYLE))
-    story.append(Paragraph('Original MRI and Grad-CAM heatmap visualizations are included when available.', NORMAL_STYLE))
-    story.append(Spacer(1, 10))
+    story.append(Paragraph('Original axial MRI slice and Grad-CAM AI attention visualization.', NORMAL_STYLE))
+    story.append(Spacer(1, 8))
 
     image_rows: list[list] = []
     captions: list = []
@@ -196,34 +228,37 @@ def build_pdf_report(
 
     # Fetch doctor notes from database
     doctor_notes = []
-    try:
-        from ..core.database import SupabaseDB
-        db = SupabaseDB.initialize()
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT n.title, n.note, n.severity, u.full_name, n.created_at
-            FROM doctor_notes n
-            JOIN users u ON n.doctor_id = u.id
-            WHERE n.scan_id = %s
-            ORDER BY n.created_at ASC
-            """,
-            (result.scan_id,)
-        )
-        rows = cursor.fetchall()
-        for r in rows:
-            doctor_notes.append({
-                'title': r[0],
-                'note': r[1],
-                'severity': r[2],
-                'doctor_name': r[3],
-                'created_at': r[4]
-            })
-        cursor.close()
-        db.return_connection(conn)
-    except Exception as e:
-        print(f"Error querying doctor notes for PDF: {e}")
+    if result.scan_id:
+        import uuid as _uuid
+        try:
+            _uuid.UUID(str(result.scan_id))
+            from ..core.database import SupabaseDB
+            db = SupabaseDB.initialize()
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT n.title, n.note, n.severity, u.full_name, n.created_at
+                FROM doctor_notes n
+                JOIN users u ON n.doctor_id = u.id
+                WHERE n.scan_id = %s
+                ORDER BY n.created_at ASC
+                """,
+                (str(result.scan_id),)
+            )
+            rows = cursor.fetchall()
+            for r in rows:
+                doctor_notes.append({
+                    'title': r[0],
+                    'note': r[1],
+                    'severity': r[2],
+                    'doctor_name': r[3],
+                    'created_at': r[4]
+                })
+            cursor.close()
+            db.return_connection(conn)
+        except (ValueError, Exception) as e:
+            logger.debug(f"Doctor notes lookup skipped: {e}")
 
     # Clinical Validation Notes Section
     if doctor_notes:
@@ -246,35 +281,47 @@ def build_pdf_report(
     ))
     story.append(Spacer(1, 14))
 
-    # Signature Box
-    story.append(Spacer(1, 10))
-    sig_data = [
-        ['Assigned Neurologist Signature:', 'Chief Neuro-Radiologist Approval:'],
-        ['', ''],
-        ['__________________________________', '__________________________________'],
-        ['Dr. Sarah Jenkins, MD', 'Clinical AI Reviewer Board']
-    ]
-    sig_table = Table(sig_data, colWidths=[85 * mm, 85 * mm], hAlign='LEFT')
+    # Clinical Review & Verification Block
+    story.append(Spacer(1, 8))
+    if doctor_notes:
+        last_note = doctor_notes[-1]
+        review_data = [
+            [f"Attending Clinician: {last_note['doctor_name']}", "Clinical Status: Clinician Reviewed"],
+            ["", ""],
+            ["Clinician Signature: ___________________________", "Date: ___________________________"],
+        ]
+    else:
+        review_data = [
+            ["Clinical Review Status: Pending Review", "Reviewing Radiologist / Physician:"],
+            ["", ""],
+            ["Clinician Name: ___________________________", "Signature: ___________________________ Date: _________"],
+        ]
+
+    sig_table = Table(review_data, colWidths=[85 * mm, 85 * mm], hAlign='LEFT')
     sig_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
-        ('FONTSIZE', (0, 0), (-1, -1), 9),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
         ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-        ('BOTTOMPADDING', (0, 1), (-1, 1), 20),
-        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#475569')),
+        ('BOTTOMPADDING', (0, 1), (-1, 1), 14),
+        ('TEXTCOLOR', (0, 0), (-1, -1), colors.HexColor('#334155')),
     ]))
     story.append(sig_table)
-    story.append(Spacer(1, 14))
-
-    # Technical footer
-    story.append(Paragraph('TECHNICAL', SECTION_HEADER_STYLE))
-    story.append(Paragraph(
-        '- AI analysis performed using the dementia screening model.\n'
-        '- Report PDF generated programmatically.\n'
-        '- Heatmap and MRI content available through the secured healthcare system.',
-        SMALL_STYLE,
-    ))
     story.append(Spacer(1, 12))
-    story.append(Paragraph(f'Report generated on {result.timestamp.strftime("%Y-%m-%d %H:%M:%S")}', SMALL_STYLE))
+
+    # Technical Architecture & Analysis Limitations
+    story.append(Paragraph('TECHNICAL METADATA & ANALYSIS LIMITATIONS', SECTION_HEADER_STYLE))
+    technical_points = (
+        '• Model Architecture: EfficientNet-B0 CNN (dementia_model.keras) trained on 2D axial brain MRI slices.<br/>'
+        '• Preprocessing: 224x224 bilinear interpolation, RGB standardization, dynamic range [0, 255].<br/>'
+        '• Explainability: Gradient-weighted Class Activation Mapping (Grad-CAM) computed on target layer "top_conv". '
+        'Highlighted regions represent model attention areas, NOT confirmed anatomical lesions or tissue pathology.<br/>'
+        '• Limitations: Automated screening tool for dementia classification only. '
+        'Does not perform brain segmentation, hippocampal volumetry, or detect non-dementia pathologies (e.g. stroke, tumors, hemorrhage).<br/>'
+        '• Storage Security: Report PDF and imaging assets are secured under strict role-based access control.'
+    )
+    story.append(Paragraph(technical_points, SMALL_STYLE))
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f'NeuroScan AI Report generated on {report_creation_date} | Preliminary Screening Output', SMALL_STYLE))
 
     document.build(story)
     buffer.seek(0)
