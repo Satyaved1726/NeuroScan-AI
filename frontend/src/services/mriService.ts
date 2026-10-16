@@ -142,7 +142,7 @@ export async function predictMRIScan(scanId: string): Promise<PredictionResult> 
 export async function generateHeatmap(scanId: string): Promise<HeatmapResult> {
   try {
     const response = await apiClient.post<HeatmapResult>(`/analysis/heatmap/${scanId}`, undefined, {
-      timeout: 120000,
+      timeout: 45000,
     });
     return response.data;
   } catch (error) {

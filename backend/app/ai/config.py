@@ -71,6 +71,10 @@ def configure_tensorflow_runtime() -> None:
     os.environ['TF_NUM_INTEROP_THREADS'] = '1'
 
 
+# Apply immediately upon module load before TensorFlow is imported
+configure_tensorflow_runtime()
+
+
 def configure_logging() -> None:
     logging.basicConfig(
         level=logging.INFO,

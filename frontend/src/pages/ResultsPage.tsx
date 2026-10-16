@@ -7,7 +7,7 @@ import { useToastContext } from '../hooks/useToastContext';
 import { useMRIWorkflow } from '../hooks/useMRIWorkflow';
 import { useLanguage } from '../hooks/useLanguage';
 import { downloadReportPdf, fetchReport } from '../services/reportService';
-import { fetchLatestAnalysis } from '../services/mriService';
+import { fetchLatestAnalysis, generateHeatmap } from '../services/mriService';
 import { fetchAnalysisHistory } from '../services/historyService';
 import { fetchDoctorNotes, addDoctorNote, type DoctorNote } from '../services/notesService';
 import { PredictionResult } from '../types/mri-workflow';
@@ -272,6 +272,21 @@ export default function ResultsPage() {
     loadResults();
   }, [scanId, routeState, toast]);
 
+  // Background fetch of heatmap if scan is loaded but heatmap was deferred or not yet loaded
+  useEffect(() => {
+    const currentScanId = prediction?.scanId ?? scanId;
+    if (currentScanId && !heatmapUrl && !isLoading) {
+      generateHeatmap(currentScanId)
+        .then((res) => {
+          if (res?.heatmapUrl) {
+            setHeatmapUrl(res.heatmapUrl);
+          }
+        })
+        .catch(() => {
+          // Heatmap is optional explainability; gracefully preserve base MRI
+        });
+    }
+  }, [prediction?.scanId, scanId, heatmapUrl, isLoading]);
 
   useEffect(() => {
     let isMounted = true;

@@ -253,41 +253,61 @@ export function MRIWorkflowProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_STEP_PROGRESS', payload: 100 });
           dispatch({ type: 'SET_ANALYSIS_PROGRESS', payload: 100 });
 
-          dispatch({ type: 'SET_CURRENT_STEP', payload: 'heatmap' });
-          dispatch({ type: 'SET_STEP_PROGRESS', payload: 20 });
-          dispatch({ type: 'SET_ANALYSIS_PROGRESS', payload: 20 });
-
-          const heatmap = await generateHeatmap(response.scanId);
-          const predictionWithHeatmap = {
+          // 1. Immediately secure and display the valid CNN prediction
+          let currentPrediction: PredictionResult = {
             ...prediction,
             originalImageUrl: prediction.originalImageUrl ?? response.original_image_url,
-            heatmapUrl: heatmap.heatmapUrl,
+            heatmapUrl: prediction.heatmapUrl ?? undefined,
           };
+          dispatch({ type: 'SET_ANALYSIS_METRICS', payload: buildTimingMetrics(prediction.timingMs) });
+          dispatch({ type: 'SET_PREDICTION', payload: currentPrediction });
+
+          // 2. Attempt Grad-CAM heatmap explainability (non-fatal so prediction is never lost)
+          dispatch({ type: 'SET_CURRENT_STEP', payload: 'heatmap' });
+          dispatch({ type: 'SET_STEP_PROGRESS', payload: 50 });
+          dispatch({ type: 'SET_ANALYSIS_PROGRESS', payload: 85 });
+
+          try {
+            const heatmap = await generateHeatmap(response.scanId);
+            if (heatmap?.heatmapUrl) {
+              currentPrediction = {
+                ...currentPrediction,
+                heatmapUrl: heatmap.heatmapUrl,
+              };
+              dispatch({ type: 'SET_PREDICTION', payload: currentPrediction });
+            }
+          } catch (heatmapError) {
+            console.warn('Grad-CAM heatmap generation was unavailable for this scan:', heatmapError);
+            addNotification(
+              'warning',
+              'Heatmap Notice',
+              'Grad-CAM visualization is currently unavailable, but your AI prediction is complete.'
+            );
+          }
+
           dispatch({ type: 'SET_STEP_PROGRESS', payload: 100 });
           dispatch({ type: 'SET_ANALYSIS_PROGRESS', payload: 100 });
 
+          // 3. Complete workflow and transition to success
           dispatch({ type: 'SET_CURRENT_STEP', payload: 'saving' });
-          dispatch({ type: 'SET_STEP_PROGRESS', payload: 65 });
-          dispatch({ type: 'SET_ANALYSIS_METRICS', payload: buildTimingMetrics(prediction.timingMs) });
-          dispatch({ type: 'SET_PREDICTION', payload: predictionWithHeatmap });
           dispatch({ type: 'SET_STEP_PROGRESS', payload: 100 });
-          dispatch({ type: 'SET_ANALYSIS_PROGRESS', payload: 100 });
           await waitForWorkflowStep();
+
           dispatch({ type: 'SET_CURRENT_STEP', payload: 'success' });
           notifyAnalysisCompleted({
-            scanId: predictionWithHeatmap.scanId,
-            reportId: predictionWithHeatmap.reportId,
-            prediction: predictionWithHeatmap.label,
+            scanId: currentPrediction.scanId,
+            reportId: currentPrediction.reportId,
+            prediction: currentPrediction.label,
           });
           addNotification(
             'success',
             'Scan Completed',
-            `MRI Scan #${predictionWithHeatmap.scanId.slice(0, 8)} processed successfully.`
+            `MRI Scan #${currentPrediction.scanId.slice(0, 8)} processed successfully.`
           );
           addNotification(
             'success',
             'Report Generated',
-            `Diagnostic report sheet compiled for ${predictionWithHeatmap.patientName || 'Patient'}.`
+            `Diagnostic report sheet compiled for ${currentPrediction.patientName || 'Patient'}.`
           );
         } finally {
           if (progressTimer) {
@@ -315,6 +335,7 @@ export function MRIWorkflowProvider({ children }: { children: ReactNode }) {
             details: error instanceof Error ? error.message : 'Unknown error',
           },
         });
+        dispatch({ type: 'SET_CURRENT_STEP', payload: 'error' });
       }
     },
     []

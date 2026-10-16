@@ -8,16 +8,17 @@ from pathlib import Path
 from threading import Lock
 from time import perf_counter
 
+from .config import TrainingConfig, configure_tensorflow_runtime
+
+# Ensure low-memory CPU configuration before TensorFlow C++ runtime loads
+configure_tensorflow_runtime()
+
 import numpy as np
 import tensorflow as tf
 from PIL import Image, UnidentifiedImageError
 
 from .classes import NUM_CLASSES
-from .config import TrainingConfig, configure_tensorflow_runtime
 from .model_loader import load_trained_model
-
-# Ensure low-memory CPU configuration
-configure_tensorflow_runtime()
 
 logger = logging.getLogger(__name__)
 

@@ -9,14 +9,16 @@ from pathlib import Path
 from threading import Lock
 from time import perf_counter
 
+from .config import TrainingConfig, configure_tensorflow_runtime
+
+# Ensure low-memory CPU configuration before TensorFlow C++ runtime loads
+configure_tensorflow_runtime()
+
 import numpy as np
 import tensorflow as tf
 from PIL import Image, UnidentifiedImageError
 
-from .config import TrainingConfig, configure_tensorflow_runtime
 from .inference import _probabilities_from_model_output, get_model_service
-
-configure_tensorflow_runtime()
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +98,7 @@ class GradCAMService:
                 extra={'target_layer': target_layer.name, 'class_count': len(self._classes), 'load_ms': load_ms},
             )
 
-    def generate(self, image_bytes: bytes) -> GradCAMOutput:
+    def generate(self, image_bytes: bytes, target_class: str | None = None) -> GradCAMOutput:
         total_started_at = perf_counter()
         self.load()
         if self._grad_model is None and (self._feature_model is None or self._base_model is None):
@@ -111,7 +113,7 @@ class GradCAMService:
         model_service = get_model_service()
         with model_service._predict_lock:
             with self._generate_lock:
-                heatmap, prediction = self._compute_heatmap(image_batch)
+                heatmap, prediction = self._compute_heatmap(image_batch, target_class=target_class)
         heatmap_ms = round((perf_counter() - heatmap_started_at) * 1000, 2)
 
         overlay_started_at = perf_counter()
@@ -137,7 +139,7 @@ class GradCAMService:
             target_layer=self._target_layer_name,
         )
 
-    def _compute_heatmap(self, image_batch: np.ndarray) -> tuple[np.ndarray, str]:
+    def _compute_heatmap(self, image_batch: np.ndarray, target_class: str | None = None) -> tuple[np.ndarray, str]:
         if self._model is None:
             raise GradCAMError('Grad-CAM model is unavailable')
 
@@ -156,7 +158,10 @@ class GradCAMService:
                 raise GradCAMError('Grad-CAM model is unavailable')
             predictions = tf.convert_to_tensor(predictions)
             probabilities = _probabilities_from_model_output(np.asarray(predictions[0], dtype=np.float32))
-            class_index = int(np.argmax(probabilities))
+            if target_class and target_class in self._classes:
+                class_index = self._classes.index(target_class)
+            else:
+                class_index = int(np.argmax(probabilities))
             class_score = predictions[:, class_index]
 
         gradients = tape.gradient(class_score, conv_outputs)
@@ -170,9 +175,9 @@ class GradCAMService:
         heatmap = tf.nn.relu(heatmap)
         max_value = tf.reduce_max(heatmap)
         if float(max_value) <= 0.0:
-            raise GradCAMError('Grad-CAM heatmap has no positive activation')
-
-        heatmap = heatmap / max_value
+            heatmap = tf.zeros_like(heatmap)
+        else:
+            heatmap = heatmap / max_value
         if probabilities.shape[0] != len(self._classes):
             raise GradCAMError(f'Model returned {probabilities.shape[0]} classes, expected {len(self._classes)}')
 
@@ -269,18 +274,34 @@ def _preprocess_for_gradcam(image_bytes: bytes, config: TrainingConfig) -> tuple
 
 
 def _overlay_heatmap(original_image: Image.Image, heatmap: np.ndarray, alpha: float = 0.42) -> bytes:
+    # Cap overlay dimensions to at most (512, 512) to prevent runaway memory on large images
+    target_size = original_image.size
+    if target_size[0] > 512 or target_size[1] > 512:
+        max_dim = max(target_size)
+        scale = 512.0 / max_dim
+        target_size = (int(target_size[0] * scale), int(target_size[1] * scale))
+        base_img = original_image.resize(target_size, Image.Resampling.BILINEAR)
+    else:
+        base_img = original_image
+
     heatmap_image = Image.fromarray(np.uint8(np.clip(heatmap, 0.0, 1.0) * 255), mode='L')
-    heatmap_image = heatmap_image.resize(original_image.size, Image.Resampling.BILINEAR)
+    heatmap_image = heatmap_image.resize(target_size, Image.Resampling.BILINEAR)
     heatmap_array = np.asarray(heatmap_image, dtype=np.float32) / 255.0
     color_heatmap = _jet_colormap(heatmap_array)
 
-    original_array = np.asarray(original_image, dtype=np.float32)
+    original_array = np.asarray(base_img, dtype=np.float32)
     blended = (1.0 - alpha) * original_array + alpha * color_heatmap
     blended = np.clip(blended, 0, 255).astype(np.uint8)
 
     output = BytesIO()
-    Image.fromarray(blended, mode='RGB').save(output, format='PNG', optimize=True)
-    return output.getvalue()
+    # Save standard PNG without multiple optimization passes (avoids heavy CPU/RAM re-encoding)
+    Image.fromarray(blended, mode='RGB').save(output, format='PNG')
+    png_bytes = output.getvalue()
+
+    del heatmap_image, heatmap_array, color_heatmap, original_array, blended, output
+    if base_img is not original_image:
+        del base_img
+    return png_bytes
 
 
 def _jet_colormap(values: np.ndarray) -> np.ndarray:

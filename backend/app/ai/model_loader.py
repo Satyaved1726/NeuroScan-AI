@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .config import TrainingConfig, configure_tensorflow_runtime
+
+# Ensure low-memory CPU configuration before TensorFlow C++ runtime loads
+configure_tensorflow_runtime()
+
 import tensorflow as tf
 
 from .classes import NUM_CLASSES
-from .config import TrainingConfig
 from .preprocess import build_training_augmentation
 
 

@@ -31,10 +31,25 @@ def generate_heatmap(
     logger.info('heatmap_generation_requested', extra={'scan_id': scanId, 'user_id': user.id})
     scan = _get_scan(scanId, user.id)
     analysis = _get_analysis_result(scanId, user.id)
+    prediction = str(analysis['prediction'])
+
+    # 1. Caching: Return already generated heatmap if available
+    existing_heatmap = analysis.get('heatmap_url')
+    if existing_heatmap:
+        logger.info('heatmap_cache_hit', extra={'scan_id': scanId, 'user_id': user.id})
+        return HeatmapResponse(
+            scanId=scanId,
+            prediction=prediction,
+            heatmapUrl=existing_heatmap,
+            status='generated',
+        )
+
+    # 2. Download scan image
     image_bytes = _download_scan_image(scan)
 
+    # 3. Generate Grad-CAM targeting the predicted class
     try:
-        gradcam_result = get_gradcam_service().generate(image_bytes)
+        gradcam_result = get_gradcam_service().generate(image_bytes, target_class=prediction)
     except GradCAMError as exc:
         logger.exception('heatmap_gradcam_failed', extra={'scan_id': scanId, 'user_id': user.id})
         raise HTTPException(
@@ -49,22 +64,6 @@ def generate_heatmap(
         ) from exc
     finally:
         del image_bytes
-
-    prediction = str(analysis['prediction'])
-    if prediction != gradcam_result.prediction:
-        logger.warning(
-            'heatmap_prediction_mismatch',
-            extra={
-                'scan_id': scanId,
-                'user_id': user.id,
-                'analysis_prediction': prediction,
-                'gradcam_prediction': gradcam_result.prediction,
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail='Grad-CAM prediction does not match the stored backend prediction',
-        )
 
     storage_path, heatmap_url = _upload_heatmap(
         scan_id=scanId,
@@ -131,7 +130,7 @@ def _get_analysis_result(scan_id: str, user_id: str) -> dict:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT id, scan_id, user_id, prediction
+            SELECT id, scan_id, user_id, prediction, heatmap_url
             FROM analysis_results
             WHERE scan_id = %s AND user_id = %s
             """,
