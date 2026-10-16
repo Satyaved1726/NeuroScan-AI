@@ -1,3 +1,32 @@
+import os
+import sys
+from datetime import datetime, timezone
+
+# 1. Enforce CPU-only and single-threaded execution BEFORE any C++ libraries load
+os.environ.setdefault('CUDA_VISIBLE_DEVICES', '-1')
+os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
+os.environ.setdefault('TF_ENABLE_ONEDNN_OPTS', '0')
+os.environ.setdefault('OMP_NUM_THREADS', '1')
+os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '1')
+os.environ.setdefault('TF_NUM_INTEROP_THREADS', '1')
+
+def _startup_diag(stage: str, detail: str = "") -> None:
+    """Print safe, timestamped diagnostic output flushed immediately to stdout for crash tracing."""
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    rss_info = ""
+    try:
+        import psutil
+        rss_mb = psutil.Process().memory_info().rss / (1024 * 1024)
+        rss_info = f" [RSS: {rss_mb:.1f} MiB]"
+    except Exception:
+        pass
+    msg = f"[STARTUP-DIAG] {now_str} UTC{rss_info} -> {stage}"
+    if detail:
+        msg += f" | {detail}"
+    print(msg, flush=True)
+
+_startup_diag("main_module_loaded", "CPU-only environment variables pre-configured")
+
 import socket
 # Custom getaddrinfo monkey patch bypassed because system DNS works correctly and hardcoded IPs caused timeouts.
 _original_getaddrinfo = socket.getaddrinfo
@@ -8,6 +37,7 @@ socket.getaddrinfo = _custom_getaddrinfo
 # Initialize low-memory CPU-only TensorFlow runtime configuration
 from .ai.config import configure_tensorflow_runtime
 configure_tensorflow_runtime()
+_startup_diag("tensorflow_runtime_configured")
 
 from contextlib import asynccontextmanager
 import logging
@@ -32,53 +62,58 @@ ALLOWED_ORIGINS = settings.cors_origins
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage application lifecycle."""
-    # Startup
-    print("CORS ENABLED")
-    print("Allowed Origins:", ALLOWED_ORIGINS)
+    """Manage application lifecycle with granular crash tracing."""
+    _startup_diag("lifespan_enter", "Uvicorn startup initiated")
+    print("CORS ENABLED", flush=True)
+    print("Allowed Origins:", ALLOWED_ORIGINS, flush=True)
 
-    logger.info("Validating Supabase configuration...")
+    _startup_diag("supabase_validation_start")
     try:
         validate_supabase_startup()
-        logger.info("Supabase configuration validated successfully")
+        _startup_diag("supabase_validation_complete", "Validated successfully")
     except Exception as e:
         logger.warning(f"Supabase startup validation skipped/failed: {e}. Proceeding with local fallback mode.")
+        _startup_diag("supabase_validation_fallback", f"Warning: {e}")
 
-    logger.info("Initializing database...")
+    _startup_diag("database_init_start")
     SupabaseDB.initialize()
     await create_tables()
-    logger.info("Database initialized successfully")
+    _startup_diag("database_init_complete", "Tables verified")
 
-    logger.info("Ensuring MRI prediction model artifact is available...")
+    _startup_diag("model_artifact_sync_start", "Checking if dementia_model.keras exists locally")
     from .ai.model_sync import ensure_model_available
     ensure_model_available()
+    _startup_diag("model_artifact_sync_complete", "Model file verified on disk")
 
-    logger.info("Loading MRI prediction model...")
+    _startup_diag("model_singleton_load_start", "Calling load_model_once() without eager warmup")
     load_model_once()
-    logger.info("MRI prediction model loaded successfully")
+    _startup_diag("model_singleton_load_complete", "Model structure and weights loaded into memory")
 
     try:
-        logger.info("Initializing store...")
+        _startup_diag("store_init_start")
         initialize_store()
-        logger.info("Store initialized successfully")
+        _startup_diag("store_init_complete")
     except Exception as e:
         logger.error(f"Failed to initialize store: {e}")
+        _startup_diag("store_init_error", str(e))
 
     try:
+        _startup_diag("offline_rag_init_start")
         from .services.jemmi.knowledge_service import KnowledgeService
-        logger.info("Initializing offline RAG database...")
         KnowledgeService.init_rag_db()
-        logger.info("Offline RAG database initialized successfully")
+        _startup_diag("offline_rag_init_complete")
     except Exception as e:
         logger.error(f"Failed to initialize RAG database: {e}")
+        _startup_diag("offline_rag_init_error", str(e))
+
+    _startup_diag("lifespan_ready", "Application successfully initialized; ready to receive requests")
 
     yield
 
-    # Shutdown
+    _startup_diag("shutdown_enter")
     try:
-        logger.info("Closing database connections...")
         SupabaseDB.close_all()
-        logger.info("Database connections closed")
+        _startup_diag("shutdown_complete", "Database connections closed")
     except Exception as e:
         logger.error(f"Error closing database: {e}")
 

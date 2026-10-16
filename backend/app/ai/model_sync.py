@@ -104,6 +104,9 @@ def ensure_model_available(force_download: bool = False) -> Path:
     try:
         with open(temp_path, "wb") as f:
             f.write(download_bytes)
+        del download_bytes
+        import gc
+        gc.collect()
 
         # Verify written temp file
         if not is_valid_model_file(temp_path):
@@ -111,6 +114,8 @@ def ensure_model_available(force_download: bool = False) -> Path:
 
         temp_path.replace(model_path)
     finally:
+        if 'download_bytes' in locals():
+            del download_bytes
         if temp_path.exists():
             try:
                 temp_path.unlink()

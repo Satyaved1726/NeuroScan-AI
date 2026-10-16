@@ -83,7 +83,11 @@ class MRIModelService:
                 raise MRIInferenceError(
                     f'Class mapping contains {len(self._classes)} classes, expected {NUM_CLASSES}'
                 )
+
+            logger.info("loading_keras_model_file_start", extra={'model_path': str(model_path)})
             self._model = load_trained_model(model_path, compile=False)
+            logger.info("loading_keras_model_file_complete")
+
             output_shape = self._model.output_shape
             output_classes = output_shape[-1] if isinstance(output_shape, tuple) else None
             if output_classes != len(self._classes):
@@ -95,21 +99,8 @@ class MRIModelService:
                 'mri_prediction_model_loaded',
                 extra={'class_count': len(self._classes), 'classes': self._classes, 'load_ms': load_ms},
             )
-
-            # Warm up the model JIT compile and layers with lightweight direct tensor pass
-            try:
-                logger.info("Warming up TensorFlow model with a lightweight forward pass...")
-                warmup_started = perf_counter()
-                dummy_input = np.zeros((1, *self._config.image_size, 3), dtype=np.float32)
-                tensor_dummy = tf.convert_to_tensor(dummy_input, dtype=tf.float32)
-                _ = self._model(tensor_dummy, training=False)
-                del dummy_input, tensor_dummy
-                import gc
-                gc.collect()
-                warmup_ms = round((perf_counter() - warmup_started) * 1000, 2)
-                logger.info(f"Model warm-up completed in {warmup_ms}ms")
-            except Exception as warmup_err:
-                logger.warning(f"Failed to warm up TensorFlow model: {warmup_err}")
+            import gc
+            gc.collect()
 
     @property
     def model(self) -> tf.keras.Model:

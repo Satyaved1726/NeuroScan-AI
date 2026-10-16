@@ -111,7 +111,7 @@ def load_trained_model(model_path: Path | str, compile: bool = False) -> tf.kera
         'MacroPrecision': MacroPrecision,
         'MacroRecall': MacroRecall,
         'MacroF1Score': MacroF1Score,
-    } if compile else None
+    }
 
     return tf.keras.models.load_model(
         model_path,
