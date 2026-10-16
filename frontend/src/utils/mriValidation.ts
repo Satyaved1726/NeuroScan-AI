@@ -1,7 +1,7 @@
 import type { QualityCheckResult } from '../types/mri-workflow';
 
 const MAX_MRI_UPLOAD_BYTES = 50 * 1024 * 1024;
-const MIN_MRI_RESOLUTION = 256;
+const MIN_MRI_RESOLUTION = 128;
 
 const ALLOWED_IMAGE_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png']);
 const ALLOWED_EXTENSIONS = /\.(jpe?g|png)$/i;

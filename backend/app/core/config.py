@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     supabase_model_bucket: str = "models"
 
     max_mri_upload_mb: int = 50
-    min_mri_resolution: int = 256
+    min_mri_resolution: int = 128
 
     # --------------------------------------------------
     # Gemini
