@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosInstance } from 'axios';
+import { supabase } from '../lib/supabase';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1';
 const ACCESS_TOKEN_KEY = 'neuroscan_access_token';
@@ -166,13 +167,31 @@ function updateLoadingState(delta: number) {
   );
 }
 
+
+
 apiClient.interceptors.request.use(
   async (config) => {
     updateLoadingState(1);
-    let accessToken = getAccessToken();
+    
+    // First attempt to get the active Supabase session access token
+    let accessToken: string | null = null;
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        accessToken = session.access_token;
+      }
+    } catch {
+      // Supabase getSession fallback
+    }
+
+    // Fallback to legacy stored token if available
+    if (!accessToken) {
+      accessToken = getAccessToken();
+    }
+
     const isAuthEndpoint = config.url?.match(/\/auth\/(login|register|refresh|logout)/);
 
-    // If access token is expired, try seamless refresh before request
+    // If access token is expired and we are using legacy token, try refresh
     if (accessToken && !accessTokenIsUsable(accessToken) && !isAuthEndpoint) {
       accessToken = await refreshAccessToken();
     }

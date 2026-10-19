@@ -163,16 +163,36 @@ def _upload_to_storage(path: str, content: bytes, content_type: str) -> None:
         ) from exc
 
 
-def _public_storage_url(path: str) -> str:
+DEFAULT_SIGNED_URL_EXPIRY_SECONDS = 86400  # 24 hours
+
+
+def _signed_storage_url(path: str, expires_in: int = DEFAULT_SIGNED_URL_EXPIRY_SECONDS) -> str:
     settings = get_settings()
     client = _get_storage_client()
-    public_url = client.storage.from_(settings.supabase_storage_bucket).get_public_url(path)
-    if not isinstance(public_url, str) or not public_url:
+    try:
+        res = client.storage.from_(settings.supabase_storage_bucket).create_signed_url(path, expires_in)
+    except Exception as exc:
+        logger.error("Failed to generate signed URL for MRI image (%s): %s", path, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='Supabase did not return an MRI image URL',
+            detail='Failed to generate secure signed URL for MRI image',
+        ) from exc
+
+    signed_url = None
+    if isinstance(res, dict):
+        signed_url = res.get('signedURL') or res.get('signedUrl')
+
+    if not isinstance(signed_url, str) or not signed_url:
+        logger.error("Supabase Storage returned invalid signed URL payload for %s: %s", path, res)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Supabase did not return a valid signed MRI image URL',
         )
-    return public_url
+    return signed_url
+
+
+# Preserve backward-compatible alias
+_public_storage_url = _signed_storage_url
 
 
 def _insert_scan_metadata(result: MRIUploadResult, user_id: str, original_filename: str) -> None:
@@ -239,7 +259,7 @@ async def upload_mri_scan(file: UploadFile, user_id: str) -> MRIUploadResult:
     storage_path = f'{user_id}/{scan_id}{extension}'
 
     await run_in_threadpool(_upload_to_storage, storage_path, content, content_type)
-    image_url = await run_in_threadpool(_public_storage_url, storage_path)
+    image_url = await run_in_threadpool(_signed_storage_url, storage_path)
 
     result = MRIUploadResult(
         scan_id=scan_id,

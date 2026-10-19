@@ -61,7 +61,7 @@ def require_role(*allowed_roles: Role) -> Callable:
 
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserOut:
-    """Get current authenticated user."""
+    """Get current authenticated user with Supabase token verification and authoritative role lookup."""
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -73,14 +73,26 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except HTTPException:
         raise
 
-    email = payload.get('sub')
+    sub = payload.get('sub')
+    if not sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid token: missing subject claim'
+        )
+
     store = get_store()
-    user = store.get_user(email)
+    user = None
+    if '-' in sub and len(sub) == 36:
+        user = store.get_user_by_id(sub)
+
+    if not user:
+        email = payload.get('email') or sub
+        user = store.get_user(email)
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='User not found'
+            detail='Authenticated user has no registered profile in public.users'
         )
 
     return UserOut(**user.to_public_dict())

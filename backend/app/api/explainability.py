@@ -34,6 +34,20 @@ def generate_heatmap(
     prediction = str(analysis['prediction'])
 
     # 1. Caching: Return already generated heatmap if available
+    existing_path = analysis.get('heatmap_storage_path')
+    if existing_path:
+        settings = get_settings()
+        if settings.supabase_url and settings.supabase_key:
+            client = create_client(settings.supabase_url, settings.supabase_key)
+            fresh_signed_url = _generate_heatmap_signed_url(client, existing_path)
+            logger.info('heatmap_cache_hit_signed_url_refreshed', extra={'scan_id': scanId, 'user_id': user.id})
+            return HeatmapResponse(
+                scanId=scanId,
+                prediction=prediction,
+                heatmapUrl=fresh_signed_url,
+                status='generated',
+            )
+
     existing_heatmap = analysis.get('heatmap_url')
     if existing_heatmap:
         logger.info('heatmap_cache_hit', extra={'scan_id': scanId, 'user_id': user.id})
@@ -130,7 +144,7 @@ def _get_analysis_result(scan_id: str, user_id: str) -> dict:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
             """
-            SELECT id, scan_id, user_id, prediction, heatmap_url
+            SELECT id, scan_id, user_id, prediction, heatmap_url, heatmap_storage_path
             FROM analysis_results
             WHERE scan_id = %s AND user_id = %s
             """,
@@ -156,6 +170,32 @@ def _get_analysis_result(scan_id: str, user_id: str) -> dict:
     return dict(analysis)
 
 
+DEFAULT_SIGNED_URL_EXPIRY_SECONDS = 86400  # 24 hours
+
+
+def _generate_heatmap_signed_url(client, storage_path: str, expires_in: int = DEFAULT_SIGNED_URL_EXPIRY_SECONDS) -> str:
+    try:
+        res = client.storage.from_(HEATMAP_BUCKET).create_signed_url(storage_path, expires_in)
+    except Exception as exc:
+        logger.error("Failed to generate signed URL for heatmap (%s): %s", storage_path, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Failed to generate secure signed URL for heatmap',
+        ) from exc
+
+    signed_url = None
+    if isinstance(res, dict):
+        signed_url = res.get('signedURL') or res.get('signedUrl')
+
+    if not isinstance(signed_url, str) or not signed_url:
+        logger.error("Supabase Storage returned invalid signed URL payload for heatmap %s: %s", storage_path, res)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Supabase did not return a valid signed heatmap URL',
+        )
+    return signed_url
+
+
 def _upload_heatmap(*, scan_id: str, user_id: str, content: bytes) -> tuple[str, str]:
     settings = get_settings()
     if not settings.supabase_url or not settings.supabase_key:
@@ -175,7 +215,9 @@ def _upload_heatmap(*, scan_id: str, user_id: str, content: bytes) -> tuple[str,
                 'x-upsert': 'false',
             },
         )
-        heatmap_url = client.storage.from_(HEATMAP_BUCKET).get_public_url(storage_path)
+        heatmap_url = _generate_heatmap_signed_url(client, storage_path)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception(
             'heatmap_storage_upload_failed',
@@ -186,11 +228,6 @@ def _upload_heatmap(*, scan_id: str, user_id: str, content: bytes) -> tuple[str,
             detail='Failed to upload heatmap to Supabase Storage',
         ) from exc
 
-    if not isinstance(heatmap_url, str) or not heatmap_url:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='Supabase did not return a heatmap URL',
-        )
     return storage_path, heatmap_url
 
 

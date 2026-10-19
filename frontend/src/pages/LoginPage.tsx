@@ -10,18 +10,17 @@ const Mail = ({ className }: { className?: string }) => <MaterialIcon name="mail
 const AlertCircle = ({ className }: { className?: string }) => <MaterialIcon name="warning" className={className} />;
 const ShieldCheck = ({ className }: { className?: string }) => <MaterialIcon name="admin_panel_settings" className={className} />;
 const CheckCircle = ({ className }: { className?: string }) => <MaterialIcon name="check_circle" className={className} />;
+
 import { useAuth } from '../hooks/useAuth';
 import { useToastContext } from '../hooks/useToastContext';
 import { useQueryClient } from '@tanstack/react-query';
-import { normalizeError, getUserFriendlyMessage } from '../utils/errorHandler';
-import { login as loginUser } from '../services/authService';
 import { fetchPatientProfile } from '../services/profileService';
 import { fetchLatestAnalysis } from '../services/mriService';
 import { fetchDashboardData } from '../services/dashboardService';
 
 export default function LoginPage() {
   const navigate = useNavigate();
-  const { setUser } = useAuth();
+  const { login, user } = useAuth();
   const toast = useToastContext();
   const queryClient = useQueryClient();
 
@@ -38,7 +37,7 @@ export default function LoginPage() {
 
     if (!email.trim()) {
       errors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
       errors.email = 'Please enter a valid email address';
     }
 
@@ -76,16 +75,16 @@ export default function LoginPage() {
       setIsLoading(true);
       setError(null);
 
-      const response = await loginUser({ email, password });
+      await login(email.trim(), password);
 
       if (rememberMe) {
-        localStorage.setItem('rememberedEmail', email);
+        localStorage.setItem('rememberedEmail', email.trim());
       } else {
         localStorage.removeItem('rememberedEmail');
       }
 
       // Prefetch data immediately based on role
-      if (response.user.role === 'User') {
+      if (user?.role === 'User') {
         queryClient.prefetchQuery({
           queryKey: ['patientProfile'],
           queryFn: fetchPatientProfile,
@@ -101,12 +100,19 @@ export default function LoginPage() {
         });
       }
 
-      setUser(response.user);
       toast.success('Login successful. Welcome back!');
-      navigate('/dashboard');
-    } catch (err) {
-      const errorInfo = normalizeError(err);
-      const message = getUserFriendlyMessage(errorInfo);
+      navigate('/dashboard', { replace: true });
+    } catch (err: any) {
+      let message = 'Unable to sign in. Please verify your credentials.';
+      if (err?.message) {
+        if (err.message.includes('Invalid login credentials')) {
+          message = 'Invalid email or password. Please check your credentials and try again.';
+        } else if (err.message.includes('Email not confirmed')) {
+          message = 'Your email has not been confirmed yet. Please check your inbox for the activation link.';
+        } else {
+          message = err.message;
+        }
+      }
       setError(message);
       toast.error(message);
     } finally {
@@ -121,12 +127,9 @@ export default function LoginPage() {
       exit={{ opacity: 0 }}
       className="min-h-[85vh] flex flex-col items-center justify-center p-4 lg:p-8 bg-clinical-bgApp dark:bg-[#0F172A] -mt-16 font-sans antialiased"
     >
-      {/* Container holding left panel + right form card */}
       <div className="w-full max-w-4xl grid gap-0 lg:grid-cols-2 rounded-clinical overflow-hidden border border-clinical-border dark:border-slate-700 bg-white dark:bg-[#1E293B] shadow-soft">
-
         {/* Left Panel */}
         <div className="hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-slate-900 via-[#0C152B] to-slate-950 text-white relative overflow-hidden border-r border-clinical-border dark:border-slate-800">
-          {/* Subtle medical grid background overlay */}
           <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-teal-500/10 via-transparent to-transparent opacity-60 pointer-events-none" />
 
           <div className="flex items-center gap-2.5 relative z-10">
@@ -145,17 +148,17 @@ export default function LoginPage() {
               </h3>
             </div>
             <p className="text-xs leading-relaxed text-slate-300 font-medium">
-              Empowering healthcare professionals with a secure and intuitive workspace for clinical imaging and patient management.
+              Empowering healthcare professionals and patients with a secure workspace for clinical imaging and neurological insights.
             </p>
             <div className="space-y-3.5 pt-2">
               {[
-                'Secure Clinical Access',
-                'Patient-Centered Workflow',
-                'Trusted Healthcare Environment'
+                'Enterprise-Grade Supabase Identity Security',
+                'Patient-Centered Clinical Workflow',
+                'Protected Medical Image Analysis',
               ].map((label) => (
                 <div key={label} className="flex items-center gap-3 text-xs">
                   <CheckCircle className="text-teal-400 h-4.5 w-4.5 shrink-0" />
-                  <span className="font-bold text-slate-150">{label}</span>
+                  <span className="font-bold text-slate-100">{label}</span>
                 </div>
               ))}
             </div>
@@ -200,6 +203,7 @@ export default function LoginPage() {
                   className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
                   placeholder="name@hospital.com"
                   disabled={isLoading}
+                  autoComplete="email"
                 />
               </div>
               {validationErrors.email && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.email}</p>}
@@ -221,6 +225,7 @@ export default function LoginPage() {
                   className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
                   placeholder="Enter secure password"
                   disabled={isLoading}
+                  autoComplete="current-password"
                 />
                 <button
                   type="button"
@@ -245,7 +250,9 @@ export default function LoginPage() {
                 />
                 Remember me
               </label>
-              <a href="#" className="text-clinical-primary hover:text-clinical-primaryDark transition-colors">Forgot Password?</a>
+              <Link to="/forgot-password" className="text-clinical-primary hover:text-clinical-primaryDark transition-colors">
+                Forgot Password?
+              </Link>
             </div>
 
             <button

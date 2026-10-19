@@ -87,8 +87,8 @@ def list_reports(
             created_at=report['created_at'],
             status=report['status'],
             report_url=report['report_url'],
-            original_image_url=report.get('original_image_url'),
-            heatmap_url=report['heatmap_url'],
+            original_image_url=_ensure_signed_storage_url(report.get('original_image_url'), 'mri-images'),
+            heatmap_url=_ensure_signed_storage_url(report.get('heatmap_url'), 'heatmaps'),
         )
         for report in reports
     ]
@@ -110,6 +110,20 @@ def _get_supabase_client():
         settings = get_settings()
         _supabase_client = create_client(settings.supabase_url, settings.supabase_key)
     return _supabase_client
+
+
+from ..core.storage_urls import refresh_or_create_signed_url
+
+
+def _ensure_signed_storage_url(url_or_path: str | None, bucket: str, expires_in: int = 86400) -> str | None:
+    if not url_or_path:
+        return None
+    try:
+        client = _get_supabase_client()
+        return refresh_or_create_signed_url(client, url_or_path, bucket, expires_in=expires_in)
+    except Exception as exc:
+        logger.warning("Failed to refresh or create signed URL for %s/%s: %s", bucket, url_or_path, exc)
+        return url_or_path
 
 
 def _get_pdf_bytes_cached(user: UserOut, report) -> bytes:
@@ -174,8 +188,8 @@ def get_report(report_id: str, user: UserOut = Depends(current_user_dependency))
         created_at=report.created_at,
         status='generated',
         report_url=report.report_url,
-        original_image_url=report.original_image_url,
-        heatmap_url=report.heatmap_url,
+        original_image_url=_ensure_signed_storage_url(report.original_image_url, 'mri-images'),
+        heatmap_url=_ensure_signed_storage_url(report.heatmap_url, 'heatmaps'),
     )
 
 

@@ -236,17 +236,15 @@ def _get_scan(scan_id: str, user_id: str) -> dict:
 
 
 def _scan_image_url(scan: dict) -> str | None:
-    image_url = scan.get('image_url')
-    if isinstance(image_url, str) and image_url:
-        return image_url
-
     settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_key:
+        return scan.get('image_url')
+
+    from ..core.storage_urls import refresh_or_create_signed_url
+    client = create_client(settings.supabase_url, settings.supabase_key)
     bucket = scan.get('storage_bucket') or settings.supabase_storage_bucket
-    storage_path = scan.get('storage_path')
-    if not settings.supabase_url or not bucket or not storage_path:
-        return None
-    base_url = settings.supabase_url.rstrip('/')
-    return f'{base_url}/storage/v1/object/public/{bucket}/{storage_path}'
+    target = scan.get('storage_path') or scan.get('image_url')
+    return refresh_or_create_signed_url(client, target, bucket)
 
 
 def _download_scan_image(scan: dict) -> bytes:

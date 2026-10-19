@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def current_user_dependency(credentials: HTTPAuthorizationCredentials = Depends(security)) -> UserOut:
-    """Dependency to get current authenticated user from access token."""
+    """Dependency to get current authenticated user from verified Supabase or legacy token."""
     if not credentials:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication required')
 
@@ -35,16 +35,32 @@ def current_user_dependency(credentials: HTTPAuthorizationCredentials = Depends(
     except HTTPException:
         raise
 
-    email = payload.get('sub')
+    sub = payload.get('sub')
+    if not sub:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Invalid token: missing subject claim')
+
     store = get_store()
-    user = store.get_user(email)
+    # If sub is a UUID, attempt lookup by ID first (Supabase Auth format)
+    user = None
+    if '-' in sub and len(sub) == 36:
+        user = store.get_user_by_id(sub)
+
+    # Fallback to lookup by email or sub as email
+    if not user:
+        email = payload.get('email') or sub
+        user = store.get_user(email)
 
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='User not found')
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Authenticated user has no registered profile in public.users',
+        )
 
-    token_version = int(payload.get('ver') or 0)
-    if token_version != user.access_token_version:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication token has been revoked')
+    # Legacy token revocation check
+    if 'ver' in payload:
+        token_version = int(payload.get('ver') or 0)
+        if token_version != user.access_token_version:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Authentication token has been revoked')
 
     return UserOut(**user.to_public_dict())
 

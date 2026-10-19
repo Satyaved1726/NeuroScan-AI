@@ -10,6 +10,7 @@
     "lint": "eslint . --ext ts,tsx --max-warnings 0"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.101.2",
     "axios": "^1.7.0",
     "framer-motion": "^11.11.17",

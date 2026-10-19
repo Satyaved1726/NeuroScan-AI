@@ -63,25 +63,65 @@ def create_refresh_token(subject: str, role: str) -> tuple[str, str, datetime]:
     return token, token_id, expire
 
 
-def decode_token(token: str, token_type: str = 'access') -> dict:
-    """Decode and validate a JWT token."""
+def decode_supabase_token(token: str) -> dict:
+    """Decode and validate a Supabase-issued JWT token with signature verification."""
     settings = get_settings()
+    secret = settings.supabase_jwt_secret or settings.jwt_secret_key
+
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
-
-        # Validate token type
-        if payload.get('type') != token_type:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f'Invalid token type. Expected {token_type}'
-            )
-
+        # Supabase JWTs use HS256 signed with the project's JWT Secret
+        # They contain: sub (UUID), role ('authenticated'), aud ('authenticated'), exp, email
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            options={
+                "verify_aud": False,  # Supabase sets aud: 'authenticated'
+                "verify_signature": True,
+            },
+        )
         return payload
     except JWTError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail='Invalid or expired authentication token'
+            detail="Invalid or expired authentication token",
         ) from exc
+
+
+def decode_token(token: str, token_type: str = 'access') -> dict:
+    """Decode and validate a JWT token (supporting both Supabase and legacy tokens)."""
+    settings = get_settings()
+
+    # First attempt decoding as a Supabase JWT if supabase_jwt_secret is available or token matches Supabase structure
+    secret_candidates = []
+    if settings.supabase_jwt_secret:
+        secret_candidates.append(settings.supabase_jwt_secret)
+    if settings.jwt_secret_key and settings.jwt_secret_key not in secret_candidates:
+        secret_candidates.append(settings.jwt_secret_key)
+
+    last_error = None
+    for secret in secret_candidates:
+        try:
+            payload = jwt.decode(
+                token,
+                secret,
+                algorithms=["HS256"],
+                options={"verify_signature": True, "verify_aud": False},
+            )
+            # If token is a legacy custom token with an explicit 'type' field, check it
+            if 'type' in payload and payload.get('type') != token_type:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=f"Invalid token type. Expected {token_type}",
+                )
+            return payload
+        except JWTError as exc:
+            last_error = exc
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token",
+    ) from last_error
 
 
 def hash_token(token: str) -> str:

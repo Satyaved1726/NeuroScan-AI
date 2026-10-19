@@ -22,16 +22,16 @@ PATIENT_ID_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 
 
 def _scan_image_url(row: dict[str, Any]) -> str | None:
-    image_url = row.get('original_image_url')
-    if isinstance(image_url, str) and image_url:
-        return image_url
-
     settings = get_settings()
-    bucket = row.get('original_storage_bucket') or settings.supabase_storage_bucket
-    storage_path = row.get('original_storage_path')
-    if not settings.supabase_url or not bucket or not storage_path:
-        return None
-    return f"{settings.supabase_url.rstrip('/')}/storage/v1/object/public/{bucket}/{storage_path}"
+    target = row.get('original_storage_path') or row.get('storage_path') or row.get('original_image_url') or row.get('image_url')
+    if not settings.supabase_url or not settings.supabase_key:
+        return row.get('original_image_url') or row.get('image_url')
+
+    from ..core.storage_urls import refresh_or_create_signed_url
+    from supabase import create_client
+    client = create_client(settings.supabase_url, settings.supabase_key)
+    bucket = row.get('original_storage_bucket') or row.get('storage_bucket') or settings.supabase_storage_bucket
+    return refresh_or_create_signed_url(client, target, bucket)
 
 
 @dataclass
@@ -2480,10 +2480,10 @@ class SupabaseStore:
                 cursor.execute(
                     """
                     SELECT 1 FROM scans s
-                    LEFT JOIN doctor_patient_assignments dpa
+                    JOIN doctor_patient_assignments dpa
                         ON dpa.patient_id = s.user_id AND dpa.status = 'Active'
                     WHERE s.id = %s
-                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL)
+                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s)
                     LIMIT 1
                     """,
                     (scan_id, user_id, user_id),
@@ -2521,10 +2521,10 @@ class SupabaseStore:
                     """
                     SELECT 1 FROM analysis_history ah
                     JOIN scans s ON s.id = ah.scan_id
-                    LEFT JOIN doctor_patient_assignments dpa
+                    JOIN doctor_patient_assignments dpa
                         ON dpa.patient_id = ah.user_id AND dpa.status = 'Active'
                     WHERE ah.report_id = %s
-                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s OR dpa.doctor_id IS NULL)
+                      AND (dpa.doctor_id = %s OR s.reviewed_by = %s)
                     LIMIT 1
                     """,
                     (report_id, user_id, user_id),

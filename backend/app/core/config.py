@@ -62,9 +62,10 @@ class Settings(BaseSettings):
         return default_origins
 
     # --------------------------------------------------
-    # JWT
+    # JWT & Supabase Auth
     # --------------------------------------------------
     jwt_secret_key: str = "change-me-in-production"
+    supabase_jwt_secret: str | None = None
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 12
     refresh_token_expire_days: int = 7

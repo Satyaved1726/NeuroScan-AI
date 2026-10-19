@@ -89,15 +89,35 @@ def _delete_profile_photo(path: str | None) -> None:
         logger.warning('Failed to delete profile photo from Supabase Storage', exc_info=True)
 
 
-def _public_storage_url(path: str) -> str:
+DEFAULT_SIGNED_URL_EXPIRY_SECONDS = 86400  # 24 hours
+
+
+def _signed_storage_url(path: str, expires_in: int = DEFAULT_SIGNED_URL_EXPIRY_SECONDS) -> str:
     settings = get_settings()
-    public_url = _storage_client().storage.from_(settings.supabase_storage_bucket).get_public_url(path)
-    if not isinstance(public_url, str) or not public_url:
+    try:
+        res = _storage_client().storage.from_(settings.supabase_storage_bucket).create_signed_url(path, expires_in)
+    except Exception as exc:
+        logger.error("Failed to generate signed URL for profile photo (%s): %s", path, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail='Supabase did not return a profile photo URL',
+            detail='Failed to generate secure signed URL for profile photo',
+        ) from exc
+
+    signed_url = None
+    if isinstance(res, dict):
+        signed_url = res.get('signedURL') or res.get('signedUrl')
+
+    if not isinstance(signed_url, str) or not signed_url:
+        logger.error("Supabase Storage returned invalid signed URL payload for profile photo %s: %s", path, res)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail='Supabase did not return a valid signed profile photo URL',
         )
-    return public_url
+    return signed_url
+
+
+# Preserve backward-compatible alias
+_public_storage_url = _signed_storage_url
 
 
 @router.get('', response_model=PatientProfileOut | None)

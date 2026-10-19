@@ -339,14 +339,85 @@ def _build_recommendation_paragraphs(items: list[str]) -> list[Paragraph]:
     return paragraphs
 
 
+_supabase_report_client = None
+
+
+def _get_report_storage_client():
+    global _supabase_report_client
+    if _supabase_report_client is None:
+        settings = get_settings()
+        if settings.supabase_url and settings.supabase_key:
+            _supabase_report_client = supabase.create_client(settings.supabase_url, settings.supabase_key)
+    return _supabase_report_client
+
+
+ALLOWED_REPORT_IMAGE_BUCKETS = frozenset({'mri-images', 'heatmaps', 'reports'})
+BLOCKED_SSRF_HOSTS = frozenset({'localhost', '127.0.0.1', '::1', '169.254.169.254', 'metadata.google.internal'})
+
+
 def fetch_report_image(url: str | None, *, max_bytes: int = 5 * 1024 * 1024) -> bytes | None:
+    """Securely fetch image bytes for PDF reports.
+
+    If the URL points to a Supabase Storage bucket, downloads the object directly
+    using server-side credentials from an allowed bucket (mri-images, heatmaps, reports),
+    ensuring private files are accessible without relying on unauthenticated public URLs.
+    Falls back to safe HTTP fetch with strict SSRF and scheme validation if needed.
+    """
     if not url:
         return None
+
+    import re
+    from urllib.parse import unquote, urlparse
+
+    # Try direct Supabase Storage server-side download first if URL matches storage pattern
+    storage_match = re.search(r'/storage/v1/object/(?:public|sign|authenticated)/([^/?]+)/([^?]+)', url)
+    if storage_match:
+        bucket = storage_match.group(1)
+        storage_path = unquote(storage_match.group(2))
+
+        # Security guard: bucket whitelist & path traversal rejection
+        if bucket in ALLOWED_REPORT_IMAGE_BUCKETS and '..' not in storage_path and not storage_path.startswith('/'):
+            try:
+                client = _get_report_storage_client()
+                if client:
+                    content = client.storage.from_(bucket).download(storage_path)
+                    if isinstance(content, bytes) and content:
+                        if len(content) > max_bytes:
+                            logger.warning(
+                                "Downloaded image for %s/%s exceeds max_bytes (%d > %d)",
+                                bucket,
+                                storage_path,
+                                len(content),
+                                max_bytes,
+                            )
+                            return None
+                        return content
+            except Exception as exc:
+                logger.warning(
+                    "Direct storage download failed for %s/%s (%s), falling back to URL fetch",
+                    bucket,
+                    storage_path,
+                    exc,
+                )
+
+    # Fallback to HTTP fetch with SSRF guards (works for signed URLs containing tokens)
     try:
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            logger.warning("Rejected non-HTTP scheme for report image: %s", parsed.scheme)
+            return None
+
+        hostname = (parsed.hostname or '').lower()
+        if hostname in BLOCKED_SSRF_HOSTS or hostname.startswith('127.') or hostname.startswith('192.168.') or hostname.startswith('10.'):
+            logger.warning("Blocked potential SSRF attempt to internal host: %s", hostname)
+            return None
+
         with urlopen(url, timeout=8) as response:
             content = response.read(max_bytes + 1)
-    except Exception:
+    except Exception as exc:
+        logger.warning("HTTP fetch failed for report image: %s", exc)
         return None
+
     if len(content) > max_bytes:
         return None
     return content

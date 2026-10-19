@@ -8,20 +8,16 @@ const Lock = ({ className }: { className?: string }) => <MaterialIcon name="lock
 const User2 = ({ className }: { className?: string }) => <MaterialIcon name="person" className={className} />;
 const AlertCircle = ({ className }: { className?: string }) => <MaterialIcon name="warning" className={className} />;
 const ShieldCheck = ({ className }: { className?: string }) => <MaterialIcon name="admin_panel_settings" className={className} />;
+const CheckCircle = ({ className }: { className?: string }) => <MaterialIcon name="check_circle" className={className} />;
+
 import { useAuth } from '../hooks/useAuth';
 import { useToastContext } from '../hooks/useToastContext';
-import { normalizeError, getUserFriendlyMessage } from '../utils/errorHandler';
-import { register as registerUser } from '../services/authService';
-import type { Role } from '../types';
-
-const roles: Role[] = ['User', 'Doctor', 'Admin'];
 
 interface FormData {
   full_name: string;
   email: string;
   password: string;
   confirmPassword: string;
-  role: Role;
 }
 
 interface ValidationErrors {
@@ -29,12 +25,11 @@ interface ValidationErrors {
   email?: string;
   password?: string;
   confirmPassword?: string;
-  role?: string;
 }
 
 export default function RegisterPage() {
   const navigate = useNavigate();
-  const { setUser } = useAuth();
+  const { register } = useAuth();
   const toast = useToastContext();
 
   const [formData, setFormData] = useState<FormData>({
@@ -42,11 +37,11 @@ export default function RegisterPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    role: 'User',
   });
 
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [validationErrors, setValidationErrors] = useState<ValidationErrors>({});
 
   const validateForm = (): boolean => {
@@ -60,7 +55,7 @@ export default function RegisterPage() {
 
     if (!formData.email.trim()) {
       errors.email = 'Email is required';
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email.trim())) {
       errors.email = 'Please enter a valid email address';
     }
 
@@ -69,15 +64,11 @@ export default function RegisterPage() {
     } else if (formData.password.length < 8) {
       errors.password = 'Password must be at least 8 characters';
     } else if (!/[A-Z]/.test(formData.password) || !/[0-9]/.test(formData.password)) {
-      errors.password = 'Password must contain uppercase letters and numbers';
+      errors.password = 'Password must contain at least one uppercase letter and one number';
     }
 
     if (formData.password !== formData.confirmPassword) {
       errors.confirmPassword = 'Passwords do not match';
-    }
-
-    if (!formData.role) {
-      errors.role = 'Role is required';
     }
 
     setValidationErrors(errors);
@@ -101,20 +92,34 @@ export default function RegisterPage() {
     try {
       setIsLoading(true);
       setError(null);
+      setSuccessMessage(null);
 
-      const response = await registerUser({
-        full_name: formData.full_name,
-        email: formData.email,
-        password: formData.password,
-        role: formData.role,
-      });
+      const result = await register(
+        formData.email.trim(),
+        formData.password,
+        formData.full_name.trim()
+      );
 
-      setUser(response.user);
-      toast.success('Account created successfully!');
-      navigate('/dashboard');
-    } catch (err) {
-      const errorInfo = normalizeError(err);
-      const message = getUserFriendlyMessage(errorInfo);
+      if (result.needsEmailVerification) {
+        setSuccessMessage(
+          'Registration initiated! Please check your email inbox to verify your account before logging in.'
+        );
+        toast.info('Verification email sent. Please check your inbox.');
+      } else {
+        toast.success('Account created successfully! Welcome to NeuroScan AI.');
+        navigate('/dashboard', { replace: true });
+      }
+    } catch (err: any) {
+      let message = 'Unable to complete registration. Please try again.';
+      if (err?.message) {
+        if (err.message.includes('User already registered')) {
+          message = 'An account with this email address already exists. Please log in or use password recovery.';
+        } else if (err.message.includes('Password should be')) {
+          message = err.message;
+        } else {
+          message = err.message;
+        }
+      }
       setError(message);
       toast.error(message);
     } finally {
@@ -130,7 +135,6 @@ export default function RegisterPage() {
       className="min-h-[85vh] flex items-center justify-center p-4 lg:p-8 bg-clinical-bgApp dark:bg-[#0F172A] -mt-16 font-sans antialiased"
     >
       <div className="w-full max-w-4xl grid gap-0 lg:grid-cols-2 rounded-clinical overflow-hidden border border-clinical-border dark:border-slate-700 bg-white dark:bg-[#1E293B] shadow-soft">
-
         {/* Left Panel */}
         <div className="hidden lg:flex flex-col justify-between p-12 bg-blue-50 dark:bg-slate-800/40 text-clinical-ink dark:text-white relative border-r border-clinical-border dark:border-slate-700">
           <div className="flex items-center gap-2 relative z-10">
@@ -144,16 +148,16 @@ export default function RegisterPage() {
 
           <div className="space-y-6 relative z-10 my-auto py-10">
             <h3 className="text-2xl font-semibold leading-tight text-clinical-textPrimary dark:text-white">
-              Create Clinical Profile
+              Patient Registration
             </h3>
             <p className="text-sm leading-relaxed text-clinical-textSecondary">
-              Create your specialized profile in the hospital diagnostic network. All credentials are encrypted and mapped for institutional auditing logs.
+              Create your secure patient account to access personal neurological scan evaluations, track longitudinal brain health, and access verified clinical reports.
             </p>
             <div className="space-y-3 font-sans">
               {[
-                { label: 'Standard Clinical Roles', desc: 'User, Doctor, and Admin access levels' },
-                { label: 'Compliant Data Siloing', desc: 'Secure database sandboxing and audits' },
-                { label: 'Automated Reports Sync', desc: 'Connect scanned histories on publication' }
+                { label: 'Secure Identity Protection', desc: 'Enterprise-grade Supabase authentication' },
+                { label: 'Personal Clinical Isolation', desc: 'Private data sandboxing and encrypted storage' },
+                { label: 'Verified Reports Access', desc: 'Secure retrieval of AI decision-support documentation' }
               ].map((item) => (
                 <div key={item.label} className="flex gap-2 text-xs">
                   <span className="text-clinical-primary font-bold">✓</span>
@@ -167,7 +171,7 @@ export default function RegisterPage() {
           </div>
 
           <p className="text-[10px] text-clinical-textSecondary font-semibold tracking-wider uppercase relative z-10">
-            Complies with HIPAA Privacy Rule constraints.
+            Strict Doctor and Admin roles require institutional authorization.
           </p>
         </div>
 
@@ -175,13 +179,20 @@ export default function RegisterPage() {
         <div className="p-8 lg:p-12 flex flex-col justify-center bg-white dark:bg-[#1E293B] text-clinical-textPrimary dark:text-slate-100">
           <div className="mb-6">
             <h2 className="text-2xl font-semibold text-clinical-ink dark:text-white">Create Account</h2>
-            <p className="text-xs text-clinical-textSecondary font-semibold mt-1">Register profile to access neurological models</p>
+            <p className="text-xs text-clinical-textSecondary font-semibold mt-1">Register your patient account</p>
           </div>
 
           {error && (
             <div className="mb-4 flex items-start gap-3 rounded-clinical border border-clinical-status-critical/20 bg-clinical-status-critical/5 p-4">
               <AlertCircle className="h-4.5 w-4.5 text-clinical-status-critical flex-shrink-0 mt-0.5" />
               <p className="text-xs font-semibold text-clinical-status-critical">{error}</p>
+            </div>
+          )}
+
+          {successMessage && (
+            <div className="mb-4 flex items-start gap-3 rounded-clinical border border-emerald-500/20 bg-emerald-500/10 p-4">
+              <CheckCircle className="h-4.5 w-4.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+              <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{successMessage}</p>
             </div>
           )}
 
@@ -196,9 +207,10 @@ export default function RegisterPage() {
                   type="text"
                   value={formData.full_name}
                   onChange={(e) => handleInputChange('full_name', e.target.value)}
-                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-405"
+                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
                   placeholder="John Doe"
                   disabled={isLoading}
+                  autoComplete="name"
                 />
               </div>
               {validationErrors.full_name && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.full_name}</p>}
@@ -214,9 +226,10 @@ export default function RegisterPage() {
                   type="email"
                   value={formData.email}
                   onChange={(e) => handleInputChange('email', e.target.value)}
-                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-405"
+                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
                   placeholder="name@hospital.com"
                   disabled={isLoading}
+                  autoComplete="email"
                 />
               </div>
               {validationErrors.email && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.email}</p>}
@@ -232,9 +245,10 @@ export default function RegisterPage() {
                   type="password"
                   value={formData.password}
                   onChange={(e) => handleInputChange('password', e.target.value)}
-                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-405"
-                  placeholder="Min. 8 characters (caps & numbers)"
+                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
+                  placeholder="Min. 8 characters (uppercase & number)"
                   disabled={isLoading}
+                  autoComplete="new-password"
                 />
               </div>
               {validationErrors.password && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.password}</p>}
@@ -250,33 +264,13 @@ export default function RegisterPage() {
                   type="password"
                   value={formData.confirmPassword}
                   onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
-                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-405"
+                  className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
                   placeholder="Verify password"
                   disabled={isLoading}
+                  autoComplete="new-password"
                 />
               </div>
               {validationErrors.confirmPassword && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.confirmPassword}</p>}
-            </div>
-
-            {/* Segmented Select Role */}
-            <div>
-              <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Professional Role</span>
-              <div className="grid grid-cols-3 gap-2 border border-clinical-border dark:border-slate-700 p-1 rounded-clinical bg-slate-50 dark:bg-slate-800">
-                {roles.map((role) => (
-                  <button
-                    key={role}
-                    type="button"
-                    onClick={() => handleInputChange('role', role)}
-                    className={`py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                      formData.role === role
-                        ? 'bg-clinical-primary text-white shadow-soft'
-                        : 'text-clinical-textSecondary hover:text-clinical-ink hover:bg-white dark:hover:bg-slate-700'
-                    }`}
-                  >
-                    {role}
-                  </button>
-                ))}
-              </div>
             </div>
 
             <button
@@ -284,7 +278,7 @@ export default function RegisterPage() {
               disabled={isLoading}
               className="w-full rounded-clinical bg-clinical-primary px-4 py-3 font-semibold text-white shadow-soft hover:bg-clinical-primaryDark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all btn-transition"
             >
-              {isLoading ? 'Creating credentials...' : 'Register Workspace Account'}
+              {isLoading ? 'Creating account...' : 'Register Patient Account'}
             </button>
           </form>
 
