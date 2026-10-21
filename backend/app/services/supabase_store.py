@@ -2702,7 +2702,7 @@ class SupabaseStore:
                 cursor.close()
             self.db.return_connection(conn)
 
-    def approve_doctor_application(self, application_id: str, reviewer_id: str, notes: Optional[str] = None) -> dict[str, Any]:
+    def approve_doctor_application(self, application_id: str, reviewer_id: Optional[str] = None, notes: Optional[str] = None) -> dict[str, Any]:
         """Approve doctor application and promote user role to Doctor."""
         conn = self.db.get_connection()
         cursor = None
@@ -2715,6 +2715,17 @@ class SupabaseStore:
 
             now_dt = datetime.now(timezone.utc)
             user_id = app['user_id']
+
+            # Check if reviewer_id exists in users table to prevent foreign key constraint violations
+            valid_reviewer = None
+            review_notes = notes or 'Approved by administrator'
+            if reviewer_id:
+                cursor.execute("SELECT id FROM users WHERE id = %s", (reviewer_id,))
+                if cursor.fetchone():
+                    valid_reviewer = reviewer_id
+                else:
+                    logger.warning(f"Reviewer user ID '{reviewer_id}' not found in users table. Setting reviewed_by to NULL.")
+                    review_notes = f"{review_notes} (Reviewer ID: {reviewer_id})"
 
             # Promote user in users table and increment access_token_version to invalidate old tokens
             cursor.execute("""
@@ -2735,7 +2746,7 @@ class SupabaseStore:
                     updated_at = %s
                 WHERE id = %s
                 RETURNING id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
-            """, (reviewer_id, now_dt, notes or 'Approved by administrator', now_dt, application_id))
+            """, (valid_reviewer, now_dt, review_notes, now_dt, application_id))
             updated_app = cursor.fetchone()
             conn.commit()
             return dict(updated_app) if updated_app else {}
@@ -2748,7 +2759,7 @@ class SupabaseStore:
                 cursor.close()
             self.db.return_connection(conn)
 
-    def reject_doctor_application(self, application_id: str, reviewer_id: str, notes: Optional[str] = None) -> dict[str, Any]:
+    def reject_doctor_application(self, application_id: str, reviewer_id: Optional[str] = None, notes: Optional[str] = None) -> dict[str, Any]:
         """Reject a doctor application."""
         conn = self.db.get_connection()
         cursor = None
@@ -2760,6 +2771,17 @@ class SupabaseStore:
                 raise ValueError("Doctor application not found")
 
             now_dt = datetime.now(timezone.utc)
+
+            valid_reviewer = None
+            review_notes = notes or 'Rejected by administrator'
+            if reviewer_id:
+                cursor.execute("SELECT id FROM users WHERE id = %s", (reviewer_id,))
+                if cursor.fetchone():
+                    valid_reviewer = reviewer_id
+                else:
+                    logger.warning(f"Reviewer user ID '{reviewer_id}' not found in users table. Setting reviewed_by to NULL.")
+                    review_notes = f"{review_notes} (Reviewer ID: {reviewer_id})"
+
             cursor.execute("""
                 UPDATE doctor_applications
                 SET status = 'rejected',
@@ -2769,7 +2791,7 @@ class SupabaseStore:
                     updated_at = %s
                 WHERE id = %s
                 RETURNING id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
-            """, (reviewer_id, now_dt, notes or 'Rejected by administrator', now_dt, application_id))
+            """, (valid_reviewer, now_dt, review_notes, now_dt, application_id))
             updated_app = cursor.fetchone()
             conn.commit()
             return dict(updated_app) if updated_app else {}

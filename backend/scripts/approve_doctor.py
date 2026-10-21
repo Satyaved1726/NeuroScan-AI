@@ -50,7 +50,7 @@ def approve_application(target, notes=None):
         print(f"Application is already approved. User role is Doctor.")
         return
 
-    admin_reviewer_id = "00000000-0000-0000-0000-000000000000"
+    admin_reviewer_id = None
     updated = store.approve_doctor_application(
         application_id=app['id'],
         reviewer_id=admin_reviewer_id,
@@ -73,7 +73,7 @@ def reject_application(target, notes=None):
         print(f"Error: Doctor application not found for '{target}'.", file=sys.stderr)
         sys.exit(1)
 
-    admin_reviewer_id = "00000000-0000-0000-0000-000000000000"
+    admin_reviewer_id = None
     updated = store.reject_doctor_application(
         application_id=app['id'],
         reviewer_id=admin_reviewer_id,

@@ -620,7 +620,14 @@ async def create_tables():
     try:
         cursor = conn.cursor()
 
-        def add_foreign_key(table: str, column: str, referenced_table: str, referenced_column: str, constraint_name: str) -> None:
+        def add_foreign_key(
+            table: str,
+            column: str,
+            referenced_table: str,
+            referenced_column: str,
+            constraint_name: str,
+            on_delete: str = 'CASCADE',
+        ) -> None:
             cursor.execute(
                 sql.SQL(
                     """
@@ -638,6 +645,7 @@ async def create_tables():
                                 AND con.conrelid = {}::regclass
                                 AND con.confrelid = {}::regclass
                                 AND att.attname = {}
+                                AND con.conname <> {}
                         LOOP
                             EXECUTE format('ALTER TABLE {} DROP CONSTRAINT %I', existing_constraint.conname);
                         END LOOP;
@@ -647,21 +655,75 @@ async def create_tables():
                     sql.Literal(table),
                     sql.Literal(referenced_table),
                     sql.Literal(column),
+                    sql.Literal(constraint_name),
                     sql.Identifier(table),
                 )
             )
 
+            # Check if constraint already exists
+            cursor.execute(
+                """
+                SELECT 1
+                FROM pg_constraint con
+                WHERE con.conname = %s
+                """,
+                (constraint_name,)
+            )
+            if cursor.fetchone():
+                return
+
+            # Check for any orphaned records where column IS NOT NULL but does not exist in referenced_table
             cursor.execute(
                 sql.SQL(
-                    "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({}) ON DELETE CASCADE"
+                    """
+                    SELECT COUNT(*)
+                    FROM {} t
+                    WHERE t.{} IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM {} r WHERE r.{} = t.{}
+                      )
+                    """
                 ).format(
                     sql.Identifier(table),
-                    sql.Identifier(constraint_name),
                     sql.Identifier(column),
                     sql.Identifier(referenced_table),
                     sql.Identifier(referenced_column),
+                    sql.Identifier(column),
                 )
             )
+            orphaned_count = cursor.fetchone()[0]
+
+            if orphaned_count > 0:
+                logger.warning(
+                    f"[DB-INIT] Table '{table}.{column}' contains {orphaned_count} orphaned reference(s) "
+                    f"not present in '{referenced_table}.{referenced_column}'. "
+                    f"Applying constraint '{constraint_name}' with NOT VALID to prevent startup crash."
+                )
+                cursor.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({}) ON DELETE {} NOT VALID"
+                    ).format(
+                        sql.Identifier(table),
+                        sql.Identifier(constraint_name),
+                        sql.Identifier(column),
+                        sql.Identifier(referenced_table),
+                        sql.Identifier(referenced_column),
+                        sql.SQL(on_delete),
+                    )
+                )
+            else:
+                cursor.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT {} FOREIGN KEY ({}) REFERENCES {}({}) ON DELETE {}"
+                    ).format(
+                        sql.Identifier(table),
+                        sql.Identifier(constraint_name),
+                        sql.Identifier(column),
+                        sql.Identifier(referenced_table),
+                        sql.Identifier(referenced_column),
+                        sql.SQL(on_delete),
+                    )
+                )
 
         def normalize_uuid_column(table: str, column: str) -> None:
             cursor.execute(
@@ -1565,9 +1627,9 @@ async def create_tables():
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        add_foreign_key('doctor_patient_assignments', 'doctor_id', 'users', 'id', 'fk_dpa_doctor_id')
-        add_foreign_key('doctor_patient_assignments', 'patient_id', 'users', 'id', 'fk_dpa_patient_id')
-        add_foreign_key('doctor_patient_assignments', 'assigned_by', 'users', 'id', 'fk_dpa_assigned_by')
+        add_foreign_key('doctor_patient_assignments', 'doctor_id', 'users', 'id', 'fk_dpa_doctor_id', on_delete='CASCADE')
+        add_foreign_key('doctor_patient_assignments', 'patient_id', 'users', 'id', 'fk_dpa_patient_id', on_delete='CASCADE')
+        add_foreign_key('doctor_patient_assignments', 'assigned_by', 'users', 'id', 'fk_dpa_assigned_by', on_delete='SET NULL')
 
         print("Creating doctor_applications table...")
         cursor.execute("""
@@ -1587,8 +1649,8 @@ async def create_tables():
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
             );
         """)
-        add_foreign_key('doctor_applications', 'user_id', 'users', 'id', 'fk_doc_app_user_id')
-        add_foreign_key('doctor_applications', 'reviewed_by', 'users', 'id', 'fk_doc_app_reviewed_by')
+        add_foreign_key('doctor_applications', 'user_id', 'users', 'id', 'fk_doc_app_user_id', on_delete='CASCADE')
+        add_foreign_key('doctor_applications', 'reviewed_by', 'users', 'id', 'fk_doc_app_reviewed_by', on_delete='SET NULL')
 
         conn.commit()
         logger.info("Database tables created successfully")

@@ -157,6 +157,63 @@ class TestDoctorWorkflowAndRBAC(unittest.TestCase):
         can_admin_access = self.store.can_user_access_report(admin_id, Role.admin.value, report_a_id)
         self.assertTrue(can_admin_access)
 
+    def test_09_admin_approves_with_valid_reviewer_in_users_table(self):
+        """Test that an approval with a valid reviewer ID correctly stores reviewed_by."""
+        # Create a real admin user in users table
+        admin_user = self.store.create_user(
+            full_name="Admin Reviewer",
+            email=self.admin_email,
+            password="AdminPassword123!",
+            role=Role.admin.value
+        )
+        self.assertIsNotNone(admin_user)
+
+        # Create doctor applicant
+        doctor_2_email = f"doc2_{self.test_id_prefix}@neuroscan.ai"
+        doc_user = self.store.create_user(
+            full_name="Dr. Validated",
+            email=doctor_2_email,
+            password="DocPassword123!",
+            role=Role.user.value
+        )
+        app = self.store.create_doctor_application(
+            user_id=doc_user.id,
+            full_name="Dr. Validated",
+            email=doctor_2_email,
+            license_number="LIC-12345",
+            specialization="Radiology",
+            hospital_affiliation="General Hospital"
+        )
+        self.assertEqual(app["status"], "pending")
+
+        # Approve with real admin user id
+        approved = self.store.approve_doctor_application(
+            application_id=app["id"],
+            reviewer_id=admin_user.id,
+            notes="Verified against state medical board."
+        )
+
+        self.assertEqual(approved["status"], "approved")
+        self.assertEqual(str(approved["reviewed_by"]), str(admin_user.id))
+
+    def test_10_database_initialization_resilience_with_orphaned_references(self):
+        """Regression test: verify create_tables() succeeds without crashing even if orphaned references exist."""
+        import asyncio
+        from app.core.database import create_tables
+
+        # Running create_tables must complete safely without ForeignKeyViolation
+        try:
+            asyncio.run(create_tables())
+        except Exception as e:
+            self.fail(f"create_tables() crashed during database initialization: {e}")
+
+        # Verify existing doctor applications remain intact and untouched
+        apps = self.store.list_doctor_applications()
+        self.assertGreater(len(apps), 0)
+        for app in apps:
+            self.assertIn(app["status"], ["pending", "approved", "rejected"])
+            self.assertTrue(len(app["email"]) > 0)
+
 
 if __name__ == "__main__":
     unittest.main()
