@@ -438,6 +438,23 @@ def create_sqlite_tables(conn):
             updated_at TEXT DEFAULT (now())
         );
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS doctor_applications (
+            id TEXT PRIMARY KEY DEFAULT (gen_random_uuid()),
+            user_id TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            license_number TEXT NOT NULL,
+            specialization TEXT NOT NULL,
+            hospital_affiliation TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            notes TEXT,
+            reviewed_by TEXT,
+            reviewed_at TEXT,
+            created_at TEXT DEFAULT (now()),
+            updated_at TEXT DEFAULT (now())
+        );
+    """)
     conn.commit()
 
 
@@ -1551,6 +1568,27 @@ async def create_tables():
         add_foreign_key('doctor_patient_assignments', 'doctor_id', 'users', 'id', 'fk_dpa_doctor_id')
         add_foreign_key('doctor_patient_assignments', 'patient_id', 'users', 'id', 'fk_dpa_patient_id')
         add_foreign_key('doctor_patient_assignments', 'assigned_by', 'users', 'id', 'fk_dpa_assigned_by')
+
+        print("Creating doctor_applications table...")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS doctor_applications (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL,
+                full_name VARCHAR(255) NOT NULL,
+                email VARCHAR(255) NOT NULL,
+                license_number VARCHAR(100) NOT NULL,
+                specialization VARCHAR(100) NOT NULL,
+                hospital_affiliation VARCHAR(255) NOT NULL,
+                status VARCHAR(50) DEFAULT 'pending',
+                notes TEXT,
+                reviewed_by UUID,
+                reviewed_at TIMESTAMP WITH TIME ZONE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+        add_foreign_key('doctor_applications', 'user_id', 'users', 'id', 'fk_doc_app_user_id')
+        add_foreign_key('doctor_applications', 'reviewed_by', 'users', 'id', 'fk_doc_app_reviewed_by')
 
         conn.commit()
         logger.info("Database tables created successfully")

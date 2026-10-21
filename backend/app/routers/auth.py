@@ -11,6 +11,8 @@ from ..core.security import (
     decode_token,
 )
 from ..models.schemas import (
+    DoctorApplicationCreate,
+    Role,
     TokenResponse,
     UserCreate,
     UserLogin,
@@ -101,11 +103,12 @@ def register(payload: UserCreate):
                 detail='Email already registered'
             )
 
+        # Enforce server-side role restriction: Public registration is strictly Role.user (Patient)
         user = store.create_user(
             full_name=payload.full_name,
             email=email,
             password=payload.password,
-            role=payload.role.value
+            role=Role.user.value
         )
 
         return issue_token_pair(user)
@@ -125,6 +128,69 @@ def register(payload: UserCreate):
         traceback.print_exc()
         logger.exception("REGISTER ERROR: unexpected registration failure")
         raise
+
+
+@router.post('/apply-doctor')
+def apply_doctor(payload: DoctorApplicationCreate):
+    """
+    Secure Doctor registration endpoint.
+    Creates user account with baseline 'User' (Patient) privileges and creates a
+    pending application in doctor_applications awaiting trusted administrator approval.
+    """
+    store = get_store()
+    email = payload.email.lower().strip()
+
+    # Check if a pending or approved application already exists
+    existing_app = store.get_doctor_application_by_email(email)
+    if existing_app and existing_app['status'] == 'pending':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='A doctor application for this email is already pending administrative review.'
+        )
+    if existing_app and existing_app['status'] == 'approved':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail='A verified doctor account already exists for this email. Please sign in.'
+        )
+
+    # Find or create base user account strictly with Role.user (never elevated automatically)
+    user = store.get_user(email)
+    if not user:
+        try:
+            user = store.create_user(
+                full_name=payload.full_name.strip(),
+                email=email,
+                password=payload.password,
+                role=Role.user.value
+            )
+        except IntegrityError:
+            user = store.get_user(email)
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail='Failed to register account credentials.'
+                )
+
+    app_record = store.create_doctor_application(
+        user_id=user.id,
+        full_name=payload.full_name.strip(),
+        email=email,
+        license_number=payload.license_number.strip(),
+        specialization=payload.specialization.strip(),
+        hospital_affiliation=payload.hospital_affiliation.strip(),
+    )
+
+    return {
+        'status': 'pending',
+        'message': 'Doctor registration submitted successfully. Your credentials are under administrative review. Access to the Doctor Dashboard will be enabled once approved by an administrator.',
+        'application_id': app_record.get('id'),
+        'user': {
+            'id': user.id,
+            'full_name': user.full_name,
+            'email': user.email,
+            'role': Role.user.value,
+        }
+    }
 
 
 @router.post('/login', response_model=TokenResponse)

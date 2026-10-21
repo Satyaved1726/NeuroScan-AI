@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, s
 from io import BytesIO
 
 from ..core.database import SupabaseDB
-from ..models.schemas import Role, UserOut
+from ..models.schemas import Role, UserOut, DoctorApplicationOut, DoctorApplicationDecision
 from ..routers.auth import current_user_dependency
 from ..core.rbac import require_roles
 from ..services.store import store
+from ..services.supabase_store import get_store
 from ..services.jemmi.knowledge_service import KnowledgeService
 
 router = APIRouter(prefix='/admin', tags=['admin'])
@@ -178,4 +179,73 @@ def add_faq(
         "status": "success",
         "message": "FAQ added successfully to RAG database",
         "document_id": doc_id
+    }
+
+
+@router.get('/doctor-applications', response_model=list[DoctorApplicationOut])
+def list_doctor_applications(
+    status: str | None = None,
+    user: UserOut = AdminUser
+):
+    """Admin-only endpoint to view clinician applications."""
+    store_instance = get_store()
+    applications = store_instance.list_doctor_applications(status=status)
+    return [DoctorApplicationOut(**app) for app in applications]
+
+
+@router.post('/doctor-applications/{application_id}/approve')
+def approve_doctor_application(
+    application_id: str,
+    payload: DoctorApplicationDecision | None = None,
+    user: UserOut = AdminUser
+):
+    """Admin-only endpoint to approve a clinician application and promote account to Doctor."""
+    store_instance = get_store()
+    app = store_instance.get_doctor_application_by_id(application_id)
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Doctor application {application_id} not found"
+        )
+
+    notes = payload.notes if payload else "Approved by administrator"
+    updated_app = store_instance.approve_doctor_application(
+        application_id=application_id,
+        reviewer_id=user.id,
+        notes=notes
+    )
+
+    return {
+        "status": "approved",
+        "message": f"Clinician account {app.get('email')} has been approved as Doctor.",
+        "application": updated_app
+    }
+
+
+@router.post('/doctor-applications/{application_id}/reject')
+def reject_doctor_application(
+    application_id: str,
+    payload: DoctorApplicationDecision | None = None,
+    user: UserOut = AdminUser
+):
+    """Admin-only endpoint to reject a clinician application."""
+    store_instance = get_store()
+    app = store_instance.get_doctor_application_by_id(application_id)
+    if not app:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Doctor application {application_id} not found"
+        )
+
+    notes = payload.notes if payload else "Rejected by administrator"
+    updated_app = store_instance.reject_doctor_application(
+        application_id=application_id,
+        reviewer_id=user.id,
+        notes=notes
+    )
+
+    return {
+        "status": "rejected",
+        "message": f"Clinician application {app.get('email')} has been rejected.",
+        "application": updated_app
     }

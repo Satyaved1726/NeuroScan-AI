@@ -9,15 +9,23 @@ const User2 = ({ className }: { className?: string }) => <MaterialIcon name="per
 const AlertCircle = ({ className }: { className?: string }) => <MaterialIcon name="warning" className={className} />;
 const ShieldCheck = ({ className }: { className?: string }) => <MaterialIcon name="admin_panel_settings" className={className} />;
 const CheckCircle = ({ className }: { className?: string }) => <MaterialIcon name="check_circle" className={className} />;
+const Badge = ({ className }: { className?: string }) => <MaterialIcon name="badge" className={className} />;
+const LocalHospital = ({ className }: { className?: string }) => <MaterialIcon name="local_hospital" className={className} />;
 
 import { useAuth } from '../hooks/useAuth';
 import { useToastContext } from '../hooks/useToastContext';
+import { applyDoctor } from '../services/authService';
+
+type AccountType = 'patient' | 'doctor';
 
 interface FormData {
   full_name: string;
   email: string;
   password: string;
   confirmPassword: string;
+  license_number: string;
+  specialization: string;
+  hospital_affiliation: string;
 }
 
 interface ValidationErrors {
@@ -25,6 +33,9 @@ interface ValidationErrors {
   email?: string;
   password?: string;
   confirmPassword?: string;
+  license_number?: string;
+  specialization?: string;
+  hospital_affiliation?: string;
 }
 
 export default function RegisterPage() {
@@ -32,11 +43,15 @@ export default function RegisterPage() {
   const { register } = useAuth();
   const toast = useToastContext();
 
+  const [accountType, setAccountType] = useState<AccountType>('patient');
   const [formData, setFormData] = useState<FormData>({
     full_name: '',
     email: '',
     password: '',
     confirmPassword: '',
+    license_number: '',
+    specialization: 'Neurology',
+    hospital_affiliation: '',
   });
 
   const [isLoading, setIsLoading] = useState(false);
@@ -71,6 +86,18 @@ export default function RegisterPage() {
       errors.confirmPassword = 'Passwords do not match';
     }
 
+    if (accountType === 'doctor') {
+      if (!formData.license_number.trim()) {
+        errors.license_number = 'Medical license number is required';
+      }
+      if (!formData.specialization.trim()) {
+        errors.specialization = 'Medical specialization is required';
+      }
+      if (!formData.hospital_affiliation.trim()) {
+        errors.hospital_affiliation = 'Hospital or clinic affiliation is required';
+      }
+    }
+
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -94,25 +121,43 @@ export default function RegisterPage() {
       setError(null);
       setSuccessMessage(null);
 
-      const result = await register(
-        formData.email.trim(),
-        formData.password,
-        formData.full_name.trim()
-      );
-
-      if (result.needsEmailVerification) {
-        setSuccessMessage(
-          'Registration initiated! Please check your email inbox to verify your account before logging in.'
+      if (accountType === 'patient') {
+        const result = await register(
+          formData.email.trim(),
+          formData.password,
+          formData.full_name.trim()
         );
-        toast.info('Verification email sent. Please check your inbox.');
+
+        if (result.needsEmailVerification) {
+          setSuccessMessage(
+            'Registration initiated! Please check your email inbox to verify your account before logging in.'
+          );
+          toast.info('Verification email sent. Please check your inbox.');
+        } else {
+          toast.success('Patient account created successfully! Welcome to NeuroScan AI.');
+          navigate('/dashboard', { replace: true });
+        }
       } else {
-        toast.success('Account created successfully! Welcome to NeuroScan AI.');
-        navigate('/dashboard', { replace: true });
+        // Clinician application workflow: submits pending application for admin approval
+        const response = await applyDoctor({
+          full_name: formData.full_name.trim(),
+          email: formData.email.trim(),
+          password: formData.password,
+          license_number: formData.license_number.trim(),
+          specialization: formData.specialization.trim(),
+          hospital_affiliation: formData.hospital_affiliation.trim(),
+        });
+
+        setSuccessMessage(
+          response.message ||
+          'Clinician registration submitted successfully. Your medical credentials are under administrative review. Once verified by an administrator, your Doctor Dashboard access will be activated.'
+        );
+        toast.info('Clinician application submitted for institutional review.');
       }
     } catch (err: any) {
       let message = 'Unable to complete registration. Please try again.';
       if (err?.message) {
-        if (err.message.includes('User already registered')) {
+        if (err.message.includes('User already registered') || err.message.includes('already registered')) {
           message = 'An account with this email address already exists. Please log in or use password recovery.';
         } else if (err.message.includes('Password should be')) {
           message = err.message;
@@ -148,17 +193,26 @@ export default function RegisterPage() {
 
           <div className="space-y-6 relative z-10 my-auto py-10">
             <h3 className="text-2xl font-semibold leading-tight text-clinical-textPrimary dark:text-white">
-              Patient Registration
+              {accountType === 'patient' ? 'Patient Registration' : 'Clinician Registration'}
             </h3>
             <p className="text-sm leading-relaxed text-clinical-textSecondary">
-              Create your secure patient account to access personal neurological scan evaluations, track longitudinal brain health, and access verified clinical reports.
+              {accountType === 'patient'
+                ? 'Create your secure patient account to access personal neurological scan evaluations, track longitudinal brain health, and access verified clinical reports.'
+                : 'Apply for an authorized clinician account to review patient scans, inspect AI dementia classifications, and sign off on diagnostic evaluations.'}
             </p>
             <div className="space-y-3 font-sans">
-              {[
-                { label: 'Secure Identity Protection', desc: 'Enterprise-grade Supabase authentication' },
-                { label: 'Personal Clinical Isolation', desc: 'Private data sandboxing and encrypted storage' },
-                { label: 'Verified Reports Access', desc: 'Secure retrieval of AI decision-support documentation' }
-              ].map((item) => (
+              {(accountType === 'patient'
+                ? [
+                    { label: 'Secure Identity Protection', desc: 'Enterprise-grade Supabase authentication' },
+                    { label: 'Personal Clinical Isolation', desc: 'Private data sandboxing and encrypted storage' },
+                    { label: 'Verified Reports Access', desc: 'Secure retrieval of AI decision-support documentation' },
+                  ]
+                : [
+                    { label: 'Institutional Verification', desc: 'Administrative review of medical licensure credentials' },
+                    { label: 'Authorized Clinical Workspace', desc: 'PACS viewport and triage review capabilities' },
+                    { label: 'Protected Elevation', desc: 'Role elevated to Doctor only after institutional approval' },
+                  ]
+              ).map((item) => (
                 <div key={item.label} className="flex gap-2 text-xs">
                   <span className="text-clinical-primary font-bold">✓</span>
                   <div>
@@ -177,10 +231,52 @@ export default function RegisterPage() {
 
         {/* Right Form Card */}
         <div className="p-8 lg:p-12 flex flex-col justify-center bg-white dark:bg-[#1E293B] text-clinical-textPrimary dark:text-slate-100">
-          <div className="mb-6">
+          <div className="mb-4">
             <h2 className="text-2xl font-semibold text-clinical-ink dark:text-white">Create Account</h2>
-            <p className="text-xs text-clinical-textSecondary font-semibold mt-1">Register your patient account</p>
+            <p className="text-xs text-clinical-textSecondary font-semibold mt-1">
+              Select your account type to proceed
+            </p>
           </div>
+
+          {/* Account Type Toggle */}
+          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-100 dark:bg-slate-800 rounded-clinical mb-4">
+            <button
+              type="button"
+              onClick={() => {
+                setAccountType('patient');
+                setError(null);
+                setSuccessMessage(null);
+              }}
+              className={`py-2 px-3 text-xs font-bold rounded-clinical transition-all flex items-center justify-center gap-1.5 ${
+                accountType === 'patient'
+                  ? 'bg-white dark:bg-[#1E293B] text-clinical-primary shadow-soft'
+                  : 'text-clinical-textSecondary hover:text-clinical-textPrimary'
+              }`}
+            >
+              <User2 className="h-4 w-4" /> Patient
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAccountType('doctor');
+                setError(null);
+                setSuccessMessage(null);
+              }}
+              className={`py-2 px-3 text-xs font-bold rounded-clinical transition-all flex items-center justify-center gap-1.5 ${
+                accountType === 'doctor'
+                  ? 'bg-white dark:bg-[#1E293B] text-clinical-primary shadow-soft'
+                  : 'text-clinical-textSecondary hover:text-clinical-textPrimary'
+              }`}
+            >
+              <LocalHospital className="h-4 w-4" /> Clinician / Doctor
+            </button>
+          </div>
+
+          {accountType === 'doctor' && (
+            <div className="mb-4 p-3 rounded-clinical border border-blue-500/20 bg-blue-500/5 text-blue-900 dark:text-blue-200 text-[11px] leading-relaxed">
+              <span className="font-bold">Administrative Approval Required:</span> Clinician applications begin in a pending state. You will be able to access the Doctor Dashboard once verified by an institutional administrator.
+            </div>
+          )}
 
           {error && (
             <div className="mb-4 flex items-start gap-3 rounded-clinical border border-clinical-status-critical/20 bg-clinical-status-critical/5 p-4">
@@ -192,11 +288,21 @@ export default function RegisterPage() {
           {successMessage && (
             <div className="mb-4 flex items-start gap-3 rounded-clinical border border-emerald-500/20 bg-emerald-500/10 p-4">
               <CheckCircle className="h-4.5 w-4.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-              <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{successMessage}</p>
+              <div>
+                <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">{successMessage}</p>
+                <div className="mt-2">
+                  <Link
+                    to="/login"
+                    className="inline-flex items-center gap-1 text-xs font-bold text-emerald-800 dark:text-emerald-300 hover:underline"
+                  >
+                    Proceed to Login →
+                  </Link>
+                </div>
+              </div>
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             <div>
               <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Full Name</span>
               <div className={`flex items-center gap-3 rounded-clinical border bg-white dark:bg-[#1E293B] px-3.5 py-2 transition-colors ${
@@ -208,7 +314,7 @@ export default function RegisterPage() {
                   value={formData.full_name}
                   onChange={(e) => handleInputChange('full_name', e.target.value)}
                   className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
-                  placeholder="John Doe"
+                  placeholder={accountType === 'doctor' ? 'Dr. Sarah Connor, MD' : 'John Doe'}
                   disabled={isLoading}
                   autoComplete="name"
                 />
@@ -227,13 +333,75 @@ export default function RegisterPage() {
                   value={formData.email}
                   onChange={(e) => handleInputChange('email', e.target.value)}
                   className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
-                  placeholder="name@hospital.com"
+                  placeholder={accountType === 'doctor' ? 'clinician@hospital.org' : 'name@example.com'}
                   disabled={isLoading}
                   autoComplete="email"
                 />
               </div>
               {validationErrors.email && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.email}</p>}
             </div>
+
+            {/* Clinician Specific Credentials */}
+            {accountType === 'doctor' && (
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Medical License #</span>
+                    <div className={`flex items-center gap-2 rounded-clinical border bg-white dark:bg-[#1E293B] px-3 py-2 transition-colors ${
+                      validationErrors.license_number ? 'border-clinical-status-critical' : 'border-clinical-border dark:border-slate-700 focus-within:border-clinical-primary'
+                    }`}>
+                      <Badge className="h-4 w-4 text-clinical-textSecondary" />
+                      <input
+                        type="text"
+                        value={formData.license_number}
+                        onChange={(e) => handleInputChange('license_number', e.target.value)}
+                        className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
+                        placeholder="MD-849201"
+                        disabled={isLoading}
+                      />
+                    </div>
+                    {validationErrors.license_number && <p className="mt-1 text-[11px] text-clinical-status-critical font-semibold">{validationErrors.license_number}</p>}
+                  </div>
+
+                  <div>
+                    <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Specialization</span>
+                    <div className="flex items-center gap-2 rounded-clinical border border-clinical-border dark:border-slate-700 bg-white dark:bg-[#1E293B] px-3 py-2 transition-colors focus-within:border-clinical-primary">
+                      <select
+                        value={formData.specialization}
+                        onChange={(e) => handleInputChange('specialization', e.target.value)}
+                        className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white"
+                        disabled={isLoading}
+                      >
+                        <option value="Neurology">Neurology</option>
+                        <option value="Neuroradiology">Neuroradiology</option>
+                        <option value="Psychiatry">Psychiatry</option>
+                        <option value="Geriatrics">Geriatrics</option>
+                        <option value="General Practice">General Practice</option>
+                        <option value="Other">Other Clinical Specialization</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Hospital / Clinic Affiliation</span>
+                  <div className={`flex items-center gap-3 rounded-clinical border bg-white dark:bg-[#1E293B] px-3.5 py-2 transition-colors ${
+                    validationErrors.hospital_affiliation ? 'border-clinical-status-critical' : 'border-clinical-border dark:border-slate-700 focus-within:border-clinical-primary'
+                  }`}>
+                    <LocalHospital className="h-4.5 w-4.5 text-clinical-textSecondary" />
+                    <input
+                      type="text"
+                      value={formData.hospital_affiliation}
+                      onChange={(e) => handleInputChange('hospital_affiliation', e.target.value)}
+                      className="w-full bg-transparent outline-none text-xs font-semibold text-clinical-textPrimary dark:text-white placeholder-slate-400"
+                      placeholder="e.g. Metro Memorial Neurology Institute"
+                      disabled={isLoading}
+                    />
+                  </div>
+                  {validationErrors.hospital_affiliation && <p className="mt-1 text-xs text-clinical-status-critical font-semibold">{validationErrors.hospital_affiliation}</p>}
+                </div>
+              </>
+            )}
 
             <div>
               <span className="mb-1 block text-[10px] font-bold uppercase tracking-wider text-clinical-textSecondary">Password</span>
@@ -276,9 +444,13 @@ export default function RegisterPage() {
             <button
               type="submit"
               disabled={isLoading}
-              className="w-full rounded-clinical bg-clinical-primary px-4 py-3 font-semibold text-white shadow-soft hover:bg-clinical-primaryDark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all btn-transition"
+              className="w-full rounded-clinical bg-clinical-primary px-4 py-3 font-semibold text-white shadow-soft hover:bg-clinical-primaryDark disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-all btn-transition mt-2"
             >
-              {isLoading ? 'Creating account...' : 'Register Patient Account'}
+              {isLoading
+                ? 'Processing...'
+                : accountType === 'patient'
+                ? 'Register Patient Account'
+                : 'Submit Clinician Application'}
             </button>
           </form>
 

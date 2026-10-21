@@ -1,4 +1,5 @@
 import { apiClient, ApiError } from './apiClient';
+import type { DoctorApplication } from '../types';
 
 export interface AdminMetrics {
   totalUsers: number;
@@ -75,6 +76,56 @@ export async function fetchSecurityPosture(): Promise<SecurityPosture> {
   }
 }
 
+/**
+ * Fetch clinician applications for admin review
+ */
+export async function fetchDoctorApplications(status?: string): Promise<DoctorApplication[]> {
+  try {
+    const response = await apiClient.get<DoctorApplication[]>('/admin/doctor-applications', {
+      params: status ? { status } : undefined,
+    });
+    return response.data;
+  } catch (error) {
+    throw normalizeAdminError(error);
+  }
+}
+
+/**
+ * Approve clinician application and promote user to Doctor
+ */
+export async function approveDoctorApplication(
+  applicationId: string,
+  notes?: string
+): Promise<{ status: string; message: string; application: DoctorApplication }> {
+  try {
+    const response = await apiClient.post<{ status: string; message: string; application: DoctorApplication }>(
+      `/admin/doctor-applications/${applicationId}/approve`,
+      { notes }
+    );
+    return response.data;
+  } catch (error) {
+    throw normalizeAdminError(error);
+  }
+}
+
+/**
+ * Reject clinician application
+ */
+export async function rejectDoctorApplication(
+  applicationId: string,
+  notes?: string
+): Promise<{ status: string; message: string; application: DoctorApplication }> {
+  try {
+    const response = await apiClient.post<{ status: string; message: string; application: DoctorApplication }>(
+      `/admin/doctor-applications/${applicationId}/reject`,
+      { notes }
+    );
+    return response.data;
+  } catch (error) {
+    throw normalizeAdminError(error);
+  }
+}
+
 function normalizeAdminError(error: unknown): ApiError {
   if (error instanceof ApiError) {
     return error;
@@ -82,3 +133,4 @@ function normalizeAdminError(error: unknown): ApiError {
 
   return new ApiError('Failed to fetch admin data');
 }
+

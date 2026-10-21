@@ -2539,9 +2539,253 @@ class SupabaseStore:
                 cursor.close()
             self.db.return_connection(conn)
 
+    def _ensure_doctor_applications_table(self):
+        """Ensure doctor_applications table exists without altering existing tables."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor()
+            if getattr(self.db, "is_mock", False):
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS doctor_applications (
+                        id TEXT PRIMARY KEY DEFAULT (gen_random_uuid()),
+                        user_id TEXT NOT NULL,
+                        full_name TEXT NOT NULL,
+                        email TEXT NOT NULL,
+                        license_number TEXT NOT NULL,
+                        specialization TEXT NOT NULL,
+                        hospital_affiliation TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        notes TEXT,
+                        reviewed_by TEXT,
+                        reviewed_at TEXT,
+                        created_at TEXT DEFAULT (now()),
+                        updated_at TEXT DEFAULT (now())
+                    );
+                """)
+            else:
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS doctor_applications (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        user_id UUID NOT NULL,
+                        full_name VARCHAR(255) NOT NULL,
+                        email VARCHAR(255) NOT NULL,
+                        license_number VARCHAR(100) NOT NULL,
+                        specialization VARCHAR(100) NOT NULL,
+                        hospital_affiliation VARCHAR(255) NOT NULL,
+                        status VARCHAR(50) DEFAULT 'pending',
+                        notes TEXT,
+                        reviewed_by UUID,
+                        reviewed_at TIMESTAMP WITH TIME ZONE,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+            conn.commit()
+        except Exception as e:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            logger.warning(f"Could not auto-ensure doctor_applications table: {e}")
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def create_doctor_application(
+        self,
+        user_id: str,
+        full_name: str,
+        email: str,
+        license_number: str,
+        specialization: str,
+        hospital_affiliation: str,
+    ) -> dict[str, Any]:
+        """Create a pending doctor application for a registered user."""
+        self._ensure_doctor_applications_table()
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            app_id = str(uuid4())
+            now_dt = datetime.now(timezone.utc)
+            cursor.execute("""
+                INSERT INTO doctor_applications (
+                    id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+                RETURNING id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+            """, (app_id, user_id, full_name, email.lower(), license_number, specialization, hospital_affiliation, now_dt, now_dt))
+            row = cursor.fetchone()
+            conn.commit()
+            return dict(row) if row else {}
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to create doctor application: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def get_doctor_application_by_id(self, application_id: str) -> Optional[dict[str, Any]]:
+        """Get doctor application by ID."""
+        self._ensure_doctor_applications_table()
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("""
+                SELECT id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+                FROM doctor_applications WHERE id = %s
+            """, (application_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get doctor application by id: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def get_doctor_application_by_email(self, email: str) -> Optional[dict[str, Any]]:
+        """Get most recent doctor application by email."""
+        self._ensure_doctor_applications_table()
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("""
+                SELECT id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+                FROM doctor_applications WHERE LOWER(email) = %s
+                ORDER BY created_at DESC LIMIT 1
+            """, (email.lower(),))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Failed to get doctor application by email: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def list_doctor_applications(self, status: Optional[str] = None) -> list[dict[str, Any]]:
+        """List doctor applications, optionally filtered by status."""
+        self._ensure_doctor_applications_table()
+        conn = self.db.get_connection()
+
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            if status:
+                cursor.execute("""
+                    SELECT id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+                    FROM doctor_applications WHERE status = %s
+                    ORDER BY created_at DESC
+                """, (status,))
+            else:
+                cursor.execute("""
+                    SELECT id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+                    FROM doctor_applications
+                    ORDER BY created_at DESC
+                """)
+            rows = cursor.fetchall()
+            return [dict(r) for r in rows] if rows else []
+        except Exception as e:
+            logger.error(f"Failed to list doctor applications: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def approve_doctor_application(self, application_id: str, reviewer_id: str, notes: Optional[str] = None) -> dict[str, Any]:
+        """Approve doctor application and promote user role to Doctor."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT * FROM doctor_applications WHERE id = %s", (application_id,))
+            app = cursor.fetchone()
+            if not app:
+                raise ValueError("Doctor application not found")
+
+            now_dt = datetime.now(timezone.utc)
+            user_id = app['user_id']
+
+            # Promote user in users table and increment access_token_version to invalidate old tokens
+            cursor.execute("""
+                UPDATE users
+                SET role = 'Doctor',
+                    updated_at = %s,
+                    access_token_version = access_token_version + 1
+                WHERE id = %s
+            """, (now_dt, user_id))
+
+            # Update application record
+            cursor.execute("""
+                UPDATE doctor_applications
+                SET status = 'approved',
+                    reviewed_by = %s,
+                    reviewed_at = %s,
+                    notes = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+            """, (reviewer_id, now_dt, notes or 'Approved by administrator', now_dt, application_id))
+            updated_app = cursor.fetchone()
+            conn.commit()
+            return dict(updated_app) if updated_app else {}
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to approve doctor application: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
+    def reject_doctor_application(self, application_id: str, reviewer_id: str, notes: Optional[str] = None) -> dict[str, Any]:
+        """Reject a doctor application."""
+        conn = self.db.get_connection()
+        cursor = None
+        try:
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            cursor.execute("SELECT * FROM doctor_applications WHERE id = %s", (application_id,))
+            app = cursor.fetchone()
+            if not app:
+                raise ValueError("Doctor application not found")
+
+            now_dt = datetime.now(timezone.utc)
+            cursor.execute("""
+                UPDATE doctor_applications
+                SET status = 'rejected',
+                    reviewed_by = %s,
+                    reviewed_at = %s,
+                    notes = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING id, user_id, full_name, email, license_number, specialization, hospital_affiliation, status, created_at, reviewed_at, reviewed_by, notes
+            """, (reviewer_id, now_dt, notes or 'Rejected by administrator', now_dt, application_id))
+            updated_app = cursor.fetchone()
+            conn.commit()
+            return dict(updated_app) if updated_app else {}
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Failed to reject doctor application: {e}")
+            raise
+        finally:
+            if cursor is not None:
+                cursor.close()
+            self.db.return_connection(conn)
+
 
 # Global store instance
 _store: Optional[SupabaseStore] = None
+
 
 
 def get_store() -> SupabaseStore:

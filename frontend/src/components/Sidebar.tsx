@@ -41,8 +41,15 @@ export default function Sidebar({ isCollapsed, setIsCollapsed, onOpenJemmiChat }
     { to: '/results', labelKey: 'sidebar_results', label: 'Results', icon: 'analytics' },
     { to: '/reports', labelKey: 'sidebar_reports', label: 'Reports', icon: 'description' },
     { to: '/assistant', labelKey: 'sidebar_assistant', label: 'AI Assistant', icon: 'chat', badge: { text: 'AI', type: 'ai' } },
+    ...(user?.role === 'Admin' ? [{
+      to: '/admin',
+      labelKey: 'sidebar_admin',
+      label: 'Admin Center',
+      icon: 'admin_panel_settings',
+    }] : []),
     { to: '#support', labelKey: 'sidebar_support', label: 'Support', icon: 'support_agent' },
   ];
+
 
   return (
     <aside

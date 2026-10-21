@@ -34,11 +34,14 @@ function mapSupabaseUserToAppUser(sbUser: SupabaseAuthUser, profileOverride?: Pa
     id: sbUser.id,
     name: profileOverride?.name || metadata.full_name || sbUser.email?.split('@')[0] || 'User',
     email: sbUser.email || '',
-    role: profileOverride?.role || (metadata.role as AppUser['role']) || 'User',
+    // Security: Never elevate to Doctor or Admin based on client user_metadata alone.
+    // The authoritative role MUST come from the server database via /api/v1/auth/me (profileOverride).
+    role: profileOverride?.role || 'User',
     joinDate: profileOverride?.joinDate || sbUser.created_at || new Date().toISOString(),
     totalScans: profileOverride?.totalScans || 0,
   };
 }
+
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();

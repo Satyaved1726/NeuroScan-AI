@@ -97,3 +97,19 @@ export type PatientProfilePayload = Omit<
   PatientProfile,
   'id' | 'user_id' | 'patient_id' | 'photo_url' | 'photo_storage_path' | 'created_at' | 'updated_at'
 >;
+
+export interface DoctorApplication {
+  id: string;
+  user_id: string;
+  full_name: string;
+  email: string;
+  license_number: string;
+  specialization: string;
+  hospital_affiliation: string;
+  status: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  reviewed_at?: string | null;
+  reviewed_by?: string | null;
+  notes?: string | null;
+}
+

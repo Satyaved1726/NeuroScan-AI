@@ -429,3 +429,32 @@ class DoctorDashboardSummary(BaseModel):
     urgent_cases: int
     review_queue: list[ClinicalQueueItem] = Field(default_factory=list)
     recent_patients: list[PatientWorklistItem] = Field(default_factory=list)
+
+
+class DoctorApplicationCreate(BaseModel):
+    full_name: str = Field(min_length=2, max_length=255)
+    email: EmailStr
+    password: str = Field(min_length=8)
+    license_number: str = Field(min_length=3, max_length=100)
+    specialization: str = Field(min_length=2, max_length=100)
+    hospital_affiliation: str = Field(min_length=2, max_length=255)
+
+
+class DoctorApplicationOut(BaseModel):
+    id: str
+    user_id: str
+    full_name: str
+    email: EmailStr
+    license_number: str
+    specialization: str
+    hospital_affiliation: str
+    status: str
+    created_at: datetime
+    reviewed_at: datetime | None = None
+    reviewed_by: str | None = None
+    notes: str | None = None
+
+
+class DoctorApplicationDecision(BaseModel):
+    notes: str | None = None
+

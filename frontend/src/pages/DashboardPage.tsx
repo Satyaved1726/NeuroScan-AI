@@ -182,8 +182,9 @@ export default function DashboardPage() {
 
   // ----------------------------------------------------
   // USER (PATIENT) DASHBOARD
+  // Strict Security: Defaults all non-Doctor accounts to Patient view
   // ----------------------------------------------------
-  if (user?.role === 'User') {
+  if (user?.role !== 'Doctor') {
     const isUserLoading = isPatientProfileLoading || isLatestAnalysisLoading || isUserHistoryLoading;
     if (isUserLoading) {
       return <SkeletonLoader type="dashboard" />;
@@ -594,6 +595,24 @@ export default function DashboardPage() {
   // ----------------------------------------------------
   if (isDoctorSummaryLoading) {
     return <SkeletonLoader type="dashboard" />;
+  }
+
+  if (doctorQueryError) {
+    return (
+      <div className="py-20 text-center space-y-4 max-w-sm mx-auto">
+        <MaterialIcon name="warning" className="text-4xl text-amber-500 mx-auto" />
+        <h3 className="text-lg font-bold text-slate-900 dark:text-white">Doctor Workspace Offline</h3>
+        <p className="text-xs text-slate-500">
+          {getUserFriendlyMessage(normalizeError(doctorQueryError))}
+        </p>
+        <button
+          onClick={() => invalidateAll()}
+          className="px-4 py-2 bg-clinical-primary text-white rounded-clinical text-xs font-bold transition"
+        >
+          Retry Connection
+        </button>
+      </div>
+    );
   }
 
   const assignedPatients = doctorSummary?.assigned_patients ?? 0;

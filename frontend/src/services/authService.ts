@@ -40,6 +40,27 @@ export interface RegisterPayload {
   role?: string;
 }
 
+export interface DoctorApplicationPayload {
+  full_name: string;
+  email: string;
+  password: string;
+  license_number: string;
+  specialization: string;
+  hospital_affiliation: string;
+}
+
+export interface DoctorApplicationResponse {
+  status: string;
+  message: string;
+  application_id: string;
+  user: {
+    id: string;
+    full_name: string;
+    email: string;
+    role: string;
+  };
+}
+
 function mapUser(user: ApiUser): AppUser {
   return {
     id: user.id,
@@ -83,6 +104,19 @@ export async function register(payload: RegisterPayload): Promise<AuthResponse> 
     throw normalizeAuthError(error);
   }
 }
+
+/**
+ * Submit doctor / clinician registration application.
+ */
+export async function applyDoctor(payload: DoctorApplicationPayload): Promise<DoctorApplicationResponse> {
+  try {
+    const response = await apiClient.post<DoctorApplicationResponse>('/auth/apply-doctor', payload);
+    return response.data;
+  } catch (error) {
+    throw normalizeAuthError(error);
+  }
+}
+
 
 /**
  * Get current authenticated user.
