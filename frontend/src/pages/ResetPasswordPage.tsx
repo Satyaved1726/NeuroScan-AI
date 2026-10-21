@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import MaterialIcon from '../components/MaterialIcon';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useToastContext } from '../hooks/useToastContext';
 
 const Lock = ({ className }: { className?: string }) => <MaterialIcon name="lock" className={className} />;
@@ -23,6 +23,10 @@ export default function ResetPasswordPage() {
 
   useEffect(() => {
     async function checkRecoverySession() {
+      if (!isSupabaseConfigured) {
+        setHasValidSession(false);
+        return;
+      }
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session) {

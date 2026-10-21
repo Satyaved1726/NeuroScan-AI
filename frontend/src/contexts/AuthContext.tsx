@@ -1,9 +1,14 @@
 import { createContext, ReactNode, useEffect, useState, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { AppUser } from '../types';
-import { clearAuthTokens } from '../services/apiClient';
-import { fetchCurrentUser } from '../services/authService';
-import { supabase } from '../lib/supabase';
+import { accessTokenIsUsable, clearAuthTokens } from '../services/apiClient';
+import {
+  fetchCurrentUser,
+  login as loginRequest,
+  logout as logoutRequest,
+  register as registerRequest,
+} from '../services/authService';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { Session, User as SupabaseAuthUser } from '@supabase/supabase-js';
 
 export type User = AppUser;
@@ -62,20 +67,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Initialize session and subscribe to Supabase auth state changes
   useEffect(() => {
     let isMounted = true;
+    let subscription: { unsubscribe: () => void } | null = null;
 
     async function initAuth() {
       try {
-        const { data: { session: initialSession }, error } = await supabase.auth.getSession();
-        if (error) {
-          console.error('[NeuroScan Auth] Failed to get session:', error.message);
+        if (isSupabaseConfigured) {
+          const { data: { session: initialSession }, error } = await supabase.auth.getSession();
+          if (error) {
+            console.error('[NeuroScan Auth] Failed to get session:', error.message);
+          }
+
+          if (initialSession?.user && isMounted) {
+            setSession(initialSession);
+            setSupabaseUser(initialSession.user);
+            const appUser = await syncProfile(initialSession.user);
+            if (isMounted) {
+              setUser(appUser);
+            }
+          }
         }
 
-        if (initialSession?.user && isMounted) {
-          setSession(initialSession);
-          setSupabaseUser(initialSession.user);
-          const appUser = await syncProfile(initialSession.user);
-          if (isMounted) {
-            setUser(appUser);
+        // If no active Supabase session was found, attempt legacy token restoration
+        const token = localStorage.getItem('neuroscan_access_token');
+        if (token && accessTokenIsUsable(token) && isMounted) {
+          try {
+            const legacyUser = await fetchCurrentUser();
+            if (isMounted) {
+              setUser(legacyUser);
+            }
+          } catch {
+            clearAuthTokens();
           }
         }
       } catch (err) {
@@ -89,40 +110,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initAuth();
 
-    // Listen to Supabase auth events (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, newSession) => {
-        if (!isMounted) return;
+    if (isSupabaseConfigured) {
+      // Listen to Supabase auth events (SIGNED_IN, SIGNED_OUT, TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY)
+      const { data } = supabase.auth.onAuthStateChange(
+        async (event, newSession) => {
+          if (!isMounted) return;
 
-        setSession(newSession);
-        setSupabaseUser(newSession?.user ?? null);
+          setSession(newSession);
+          setSupabaseUser(newSession?.user ?? null);
 
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
-          if (newSession?.user && !isResolvingRef.current) {
-            isResolvingRef.current = true;
-            try {
-              const appUser = await syncProfile(newSession.user);
-              if (isMounted) {
-                setUser(appUser);
+          if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+            if (newSession?.user && !isResolvingRef.current) {
+              isResolvingRef.current = true;
+              try {
+                const appUser = await syncProfile(newSession.user);
+                if (isMounted) {
+                  setUser(appUser);
+                }
+              } finally {
+                isResolvingRef.current = false;
               }
-            } finally {
-              isResolvingRef.current = false;
             }
+            if (isMounted) setIsLoading(false);
+          } else if (event === 'SIGNED_OUT') {
+            clearAuthTokens();
+            if (isMounted) {
+              setUser(null);
+              setSupabaseUser(null);
+              setSession(null);
+              setIsLoading(false);
+            }
+          } else if (event === 'PASSWORD_RECOVERY') {
+            navigate('/reset-password');
           }
-          if (isMounted) setIsLoading(false);
-        } else if (event === 'SIGNED_OUT') {
-          clearAuthTokens();
-          if (isMounted) {
-            setUser(null);
-            setSupabaseUser(null);
-            setSession(null);
-            setIsLoading(false);
-          }
-        } else if (event === 'PASSWORD_RECOVERY') {
-          navigate('/reset-password');
         }
-      }
-    );
+      );
+      subscription = data.subscription;
+    }
 
     const handleAuthExpired = () => {
       logout();
@@ -132,7 +156,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       isMounted = false;
-      subscription.unsubscribe();
+      subscription?.unsubscribe();
       window.removeEventListener('neuroscan:auth-expired', handleAuthExpired as EventListener);
     };
   }, [syncProfile, navigate]);
@@ -147,20 +171,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+      if (isSupabaseConfigured) {
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
 
-      if (error) {
-        throw error;
-      }
+        if (error) {
+          throw error;
+        }
 
-      if (data.user) {
-        setSupabaseUser(data.user);
-        setSession(data.session);
-        const resolvedUser = await syncProfile(data.user);
-        setUser(resolvedUser);
+        if (data.user) {
+          setSupabaseUser(data.user);
+          setSession(data.session);
+          const resolvedUser = await syncProfile(data.user);
+          setUser(resolvedUser);
+        }
+      } else {
+        const { user: userData } = await loginRequest({ email, password });
+        setUser(userData);
       }
     } finally {
       setIsLoading(false);
@@ -170,33 +199,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = async (email: string, password: string, fullName: string) => {
     setIsLoading(true);
     try {
-      const redirectOrigin = typeof window !== 'undefined' ? window.location.origin : '';
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            role: 'User', // Public registration strictly assigns 'User'
+      if (isSupabaseConfigured) {
+        const redirectOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: {
+            data: {
+              full_name: fullName.trim(),
+              role: 'User', // Public registration strictly assigns 'User'
+            },
+            emailRedirectTo: `${redirectOrigin}/login`,
           },
-          emailRedirectTo: `${redirectOrigin}/login`,
-        },
-      });
+        });
 
-      if (error) {
-        throw error;
-      }
-
-      const needsVerification = !data.session;
-      if (data.user) {
-        setSupabaseUser(data.user);
-        setSession(data.session);
-        if (data.session) {
-          const resolvedUser = await syncProfile(data.user);
-          setUser(resolvedUser);
+        if (error) {
+          throw error;
         }
+
+        const needsVerification = !data.session;
+        if (data.user) {
+          setSupabaseUser(data.user);
+          setSession(data.session);
+          if (data.session) {
+            const resolvedUser = await syncProfile(data.user);
+            setUser(resolvedUser);
+          }
+        }
+        return { needsEmailVerification: needsVerification };
+      } else {
+        const { user: userData } = await registerRequest({
+          email,
+          password,
+          full_name: fullName,
+          role: 'User',
+        });
+        setUser(userData);
+        return { needsEmailVerification: false };
       }
-      return { needsEmailVerification: needsVerification };
     } finally {
       setIsLoading(false);
     }
@@ -205,7 +245,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = async () => {
     setIsLoading(true);
     try {
-      await supabase.auth.signOut();
+      if (isSupabaseConfigured) {
+        await supabase.auth.signOut();
+      } else {
+        await logoutRequest();
+      }
     } catch (err) {
       console.warn('[NeuroScan Auth] Supabase signOut warning:', err);
     } finally {
@@ -224,7 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         supabaseUser,
         session,
-        isAuthenticated: !!user && !!session,
+        isAuthenticated: !!user && (isSupabaseConfigured ? !!session : true),
         isLoading,
         login,
         register,

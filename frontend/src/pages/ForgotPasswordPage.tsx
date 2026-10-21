@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import MaterialIcon from '../components/MaterialIcon';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { useToastContext } from '../hooks/useToastContext';
 
 const Mail = ({ className }: { className?: string }) => <MaterialIcon name="mail" className={className} />;
@@ -28,6 +28,10 @@ export default function ForgotPasswordPage() {
     try {
       setIsLoading(true);
       setError(null);
+
+      if (!isSupabaseConfigured) {
+        throw new Error('Password recovery service is unavailable in this environment. Please contact support.');
+      }
 
       const redirectOrigin = typeof window !== 'undefined' ? window.location.origin : '';
       const { error: resetError } = await supabase.auth.resetPasswordForEmail(email.trim(), {
